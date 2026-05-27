@@ -5,10 +5,24 @@ This document is only for the two launcher scripts in `scripts/`:
 - `scripts/claude-litellm.ps1`
 - `scripts/claude-litellm.sh`
 
+GitHub repo:
+
+```text
+https://github.com/saurabhpatil-simplecrm/LiteLLM
+```
+
+Raw script base:
+
+```text
+https://raw.githubusercontent.com/saurabhpatil-simplecrm/LiteLLM/main/scripts
+```
+
 Both scripts can start Claude in either mode:
 
 - `litellm`: use the LiteLLM proxy
 - `default`: clear Anthropic proxy environment variables for this run and use normal Claude
+
+The scripts only set or clear environment variables inside the process that launches Claude. They do not permanently edit your shell profile.
 
 ## LiteLLM Defaults
 
@@ -26,6 +40,8 @@ ANTHROPIC_AUTH_TOKEN
 LITELLM_TEST_KEY
 LITELLM_MASTER_KEY
 ```
+
+An empty token is allowed only when the LiteLLM proxy allows unauthenticated requests.
 
 ## PowerShell Script
 
@@ -68,8 +84,9 @@ Check without launching Claude:
 Run directly from GitHub raw:
 
 ```powershell
-iex "& { $(irm 'https://raw.githubusercontent.com/OWNER/REPO/main/scripts/claude-litellm.ps1') }"
-iex "& { $(irm 'https://raw.githubusercontent.com/OWNER/REPO/main/scripts/claude-litellm.ps1') } default"
+iex "& { $(irm 'https://raw.githubusercontent.com/saurabhpatil-simplecrm/LiteLLM/main/scripts/claude-litellm.ps1') }"
+iex "& { $(irm 'https://raw.githubusercontent.com/saurabhpatil-simplecrm/LiteLLM/main/scripts/claude-litellm.ps1') } default"
+iex "& { $(irm 'https://raw.githubusercontent.com/saurabhpatil-simplecrm/LiteLLM/main/scripts/claude-litellm.ps1') } --claude --version"
 ```
 
 ## Bash Script
@@ -113,8 +130,9 @@ bash ./scripts/claude-litellm.sh --default --doctor --skip-health
 Run directly from GitHub raw:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/OWNER/REPO/main/scripts/claude-litellm.sh | bash
-curl -fsSL https://raw.githubusercontent.com/OWNER/REPO/main/scripts/claude-litellm.sh | bash -s -- default
+curl -fsSL https://raw.githubusercontent.com/saurabhpatil-simplecrm/LiteLLM/main/scripts/claude-litellm.sh | bash
+curl -fsSL https://raw.githubusercontent.com/saurabhpatil-simplecrm/LiteLLM/main/scripts/claude-litellm.sh | bash -s -- default
+curl -fsSL https://raw.githubusercontent.com/saurabhpatil-simplecrm/LiteLLM/main/scripts/claude-litellm.sh | bash -s -- --claude --version
 ```
 
-For GitHub raw usage, replace `OWNER`, `REPO`, and `main` with the real repo path. Use a pinned commit SHA instead of `main` when you want a stable command.
+Put wrapper flags before Claude args, or separate Claude args with `--claude` or `--`. Use a pinned commit SHA instead of `main` when you want a stable raw command.

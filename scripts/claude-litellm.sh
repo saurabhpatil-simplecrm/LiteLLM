@@ -194,10 +194,17 @@ trim() {
 
 strip_matching_quotes() {
   local value="$1"
-  if [[ "$value" == \"*\" && "$value" == *\" ]] || [[ "$value" == \'*\' && "$value" == *\' ]]; then
+  if [ "${#value}" -ge 2 ] && {
+    { [[ "$value" == \"*\" && "$value" == *\" ]]; } ||
+    { [[ "$value" == \'*\' && "$value" == *\' ]]; }
+  }; then
     value="${value:1:${#value}-2}"
   fi
   printf '%s' "$value"
+}
+
+valid_env_name() {
+  [[ "$1" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]
 }
 
 load_env_file() {
@@ -245,19 +252,17 @@ normalize_base_url() {
   local value
   value="$(trim "$1")"
   [ -n "$value" ] || die "Base URL cannot be empty. Pass --base-url or set CLAUDE_LITELLM_BASE_URL."
+  [[ "$value" != *[[:space:]]* ]] || die "Base URL cannot contain whitespace: $value"
 
   while [[ "$value" == */ ]]; do
     value="${value%/}"
   done
 
-  case "$value" in
-    http://*|https://*)
-      printf '%s' "$value"
-      ;;
-    *)
-      die "Base URL must use http or https: $value"
-      ;;
-  esac
+  if [[ "$value" =~ ^https?://[^/[:space:]]+(/.*)?$ ]]; then
+    printf '%s' "$value"
+  else
+    die "Base URL must be an absolute http or https URL: $value"
+  fi
 }
 
 quote_bash() {
@@ -384,6 +389,8 @@ RESOLVED_MODEL="$(trim "$RESOLVED_MODEL")"
 if [ "$AUTH_TOKEN_SET" -eq 1 ]; then
   RESOLVED_AUTH_TOKEN="$AUTH_TOKEN"
 elif [ -n "$(trim "$TOKEN_ENV")" ]; then
+  TOKEN_ENV="$(trim "$TOKEN_ENV")"
+  valid_env_name "$TOKEN_ENV" || die "Token environment variable name is invalid: $TOKEN_ENV"
   if [ -z "${!TOKEN_ENV+x}" ]; then
     die "Token environment variable \"$TOKEN_ENV\" was not found."
   fi

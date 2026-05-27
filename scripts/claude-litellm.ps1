@@ -214,6 +214,11 @@ function Test-NonBlank {
     return $null -ne $Value -and $Value.Trim().Length -gt 0
 }
 
+function Test-EnvName {
+    param([string]$Name)
+    return $Name -match "^[A-Za-z_][A-Za-z0-9_]*$"
+}
+
 function Read-EnvFile {
     param([string]$Path)
 
@@ -242,7 +247,7 @@ function Read-EnvFile {
         }
 
         $value = $line.Substring($equalsAt + 1).Trim()
-        if (($value.StartsWith('"') -and $value.EndsWith('"')) -or ($value.StartsWith("'") -and $value.EndsWith("'"))) {
+        if ($value.Length -ge 2 -and (($value.StartsWith('"') -and $value.EndsWith('"')) -or ($value.StartsWith("'") -and $value.EndsWith("'")))) {
             $value = $value.Substring(1, $value.Length - 2)
         }
 
@@ -342,7 +347,8 @@ function Format-CommandLine {
         if ($argument -match "^[A-Za-z0-9_./:=@-]+$") {
             $parts.Add($argument) | Out-Null
         } else {
-            $parts.Add("`"$($argument.Replace('"', '\"'))`"") | Out-Null
+            $escaped = $argument.Replace('`', '``').Replace('"', '`"')
+            $parts.Add("`"$escaped`"") | Out-Null
         }
     }
     return ($parts -join " ")
@@ -450,9 +456,14 @@ $ResolvedModel = $ResolvedModel.Trim()
 if ($AuthTokenSet) {
     $ResolvedAuthToken = $AuthToken
 } elseif (Test-NonBlank $TokenEnv) {
-    $rawToken = Get-RawConfigValue -Name $TokenEnv -EnvFileValues $EnvFileValues
+    $ResolvedTokenEnv = $TokenEnv.Trim()
+    if (-not (Test-EnvName $ResolvedTokenEnv)) {
+        throw "Token environment variable name is invalid: $ResolvedTokenEnv"
+    }
+
+    $rawToken = Get-RawConfigValue -Name $ResolvedTokenEnv -EnvFileValues $EnvFileValues
     if ($null -eq $rawToken) {
-        throw "Token environment variable `"$TokenEnv`" was not found."
+        throw "Token environment variable `"$ResolvedTokenEnv`" was not found."
     }
     $ResolvedAuthToken = $rawToken
 } else {
