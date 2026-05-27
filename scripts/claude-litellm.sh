@@ -21,6 +21,8 @@ USE_DEFAULT_CLAUDE=0
 HELP=0
 CLAUDE_ARGS=()
 WARNINGS=()
+CLAUDE_ARG_COUNT=0
+WARNING_COUNT=0
 
 usage() {
   cat <<'EOF'
@@ -73,7 +75,7 @@ read_required_value() {
   local index="$1"
   local flag="$2"
   local next_index=$((index + 1))
-  if [ "$next_index" -ge "${#INPUT_ARGS[@]}" ]; then
+  if [ "$next_index" -ge "$INPUT_ARG_COUNT" ]; then
     die "Missing value for $flag."
   fi
   printf '%s' "${INPUT_ARGS[$next_index]}"
@@ -82,14 +84,21 @@ read_required_value() {
 append_remaining() {
   local start="$1"
   local item
-  for ((item = start; item < ${#INPUT_ARGS[@]}; item += 1)); do
+  for ((item = start; item < INPUT_ARG_COUNT; item += 1)); do
     CLAUDE_ARGS+=("${INPUT_ARGS[$item]}")
+    CLAUDE_ARG_COUNT=$((CLAUDE_ARG_COUNT + 1))
   done
 }
 
+append_warning() {
+  WARNINGS+=("$1")
+  WARNING_COUNT=$((WARNING_COUNT + 1))
+}
+
 INPUT_ARGS=("$@")
+INPUT_ARG_COUNT=$#
 i=0
-while [ "$i" -lt "${#INPUT_ARGS[@]}" ]; do
+while [ "$i" -lt "$INPUT_ARG_COUNT" ]; do
   arg="${INPUT_ARGS[$i]}"
   case "$arg" in
     --|--claude)
@@ -168,7 +177,7 @@ while [ "$i" -lt "${#INPUT_ARGS[@]}" ]; do
       HELP=1
       ;;
     -*)
-      WARNINGS+=("Treating \"$arg\" and the remaining arguments as Claude args. Put wrapper flags first or separate Claude args with \"--\".")
+      append_warning "Treating \"$arg\" and the remaining arguments as Claude args. Put wrapper flags first or separate Claude args with \"--\"."
       append_remaining "$i"
       break
       ;;
@@ -286,21 +295,32 @@ redact() {
   if [ "$length" -le 8 ]; then
     printf '****'
   else
-    printf '%s...%s' "${value:0:4}" "${value: -4}"
+    local suffix_start=$((length - 4))
+    printf '%s...%s' "${value:0:4}" "${value:$suffix_start:4}"
   fi
 }
 
 print_command() {
   local item
   printf 'Command: claude'
-  for item in "${CLAUDE_ARGS[@]}"; do
-    printf ' %q' "$item"
-  done
+  if [ "$CLAUDE_ARG_COUNT" -gt 0 ]; then
+    for item in "${CLAUDE_ARGS[@]}"; do
+      printf ' %q' "$item"
+    done
+  fi
   printf '\n'
 }
 
 clear_anthropic_process_env() {
   unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_MODEL
+}
+
+exec_claude() {
+  if [ "$CLAUDE_ARG_COUNT" -gt 0 ]; then
+    exec claude "${CLAUDE_ARGS[@]}"
+  fi
+
+  exec claude
 }
 
 test_claude_command() {
@@ -314,9 +334,11 @@ test_claude_command() {
   return 1
 }
 
-for warning in "${WARNINGS[@]}"; do
-  printf 'WARN %s\n' "$warning" >&2
-done
+if [ "$WARNING_COUNT" -gt 0 ]; then
+  for warning in "${WARNINGS[@]}"; do
+    printf 'WARN %s\n' "$warning" >&2
+  done
+fi
 
 if [ "$USE_DEFAULT_CLAUDE" -eq 1 ] && {
   [ "$BASE_URL_SET" -eq 1 ] ||
@@ -362,7 +384,7 @@ if [ "$USE_DEFAULT_CLAUDE" -eq 1 ]; then
 
   clear_anthropic_process_env
   printf 'Switched Claude to default config (ANTHROPIC_* env vars cleared for this run).\n'
-  exec claude "${CLAUDE_ARGS[@]}"
+  exec_claude
 fi
 
 load_env_file
@@ -463,4 +485,4 @@ printf 'Switched Claude to LiteLLM (%s, model %s, token %s)\n' \
   "$ANTHROPIC_MODEL" \
   "$(redact "$ANTHROPIC_AUTH_TOKEN")"
 
-exec claude "${CLAUDE_ARGS[@]}"
+exec_claude
