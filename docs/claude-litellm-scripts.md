@@ -92,6 +92,8 @@ macOS or Linux Bash, default-Claude mode:
 curl -fsSL https://raw.githubusercontent.com/saurabhpatil-simplecrm/LiteLLM/main/scripts/claude-litellm.sh | bash -s -- default
 ```
 
+Run the Bash commands from Bash or Git Bash. In PowerShell, use the PowerShell script instead of piping `curl.exe` into Bash, because PowerShell can re-encode piped text before Bash reads it.
+
 Check from GitHub without launching a real prompt:
 
 ```powershell
