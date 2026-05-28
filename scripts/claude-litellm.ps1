@@ -355,7 +355,7 @@ function Format-CommandLine {
 }
 
 function Clear-AnthropicProcessEnv {
-    Remove-Item Env:ANTHROPIC_BASE_URL, Env:ANTHROPIC_AUTH_TOKEN, Env:ANTHROPIC_MODEL -ErrorAction SilentlyContinue
+    Remove-Item Env:ANTHROPIC_BASE_URL, Env:ANTHROPIC_AUTH_TOKEN, Env:ANTHROPIC_MODEL, Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
 }
 
 function Test-ClaudeCommand {
@@ -385,7 +385,7 @@ if ($UseDefaultClaude -and ($BaseUrlSet -or $AuthTokenSet -or $ModelSet -or (Tes
 
 if ($UseDefaultClaude) {
     if ($PrintEnv) {
-        Write-Output "Remove-Item Env:ANTHROPIC_BASE_URL, Env:ANTHROPIC_AUTH_TOKEN, Env:ANTHROPIC_MODEL -ErrorAction SilentlyContinue"
+        Write-Output "Remove-Item Env:ANTHROPIC_BASE_URL, Env:ANTHROPIC_AUTH_TOKEN, Env:ANTHROPIC_MODEL, Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue"
         Write-Output "claude"
         exit 0
     }
@@ -396,6 +396,7 @@ if ($UseDefaultClaude) {
         Write-Host "ANTHROPIC_BASE_URL=(cleared)"
         Write-Host "ANTHROPIC_AUTH_TOKEN=(cleared)"
         Write-Host "ANTHROPIC_MODEL=(cleared)"
+        Write-Host "ANTHROPIC_API_KEY=(cleared)"
         Write-Host "Command: $(Format-CommandLine $ClaudeArgs.ToArray())"
         exit 0
     }
@@ -474,6 +475,7 @@ if ($AuthTokenSet) {
 }
 
 if ($PrintEnv) {
+    Write-Output "Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue"
     Write-Output "`$env:ANTHROPIC_BASE_URL = $(Quote-PowerShellValue $ResolvedBaseUrl)"
     Write-Output "`$env:ANTHROPIC_AUTH_TOKEN = $(Quote-PowerShellValue $ResolvedAuthToken)"
     Write-Output "`$env:ANTHROPIC_MODEL = $(Quote-PowerShellValue $ResolvedModel)"
@@ -536,6 +538,7 @@ if ([string]::IsNullOrEmpty($ResolvedAuthToken)) {
 $env:ANTHROPIC_BASE_URL = $ResolvedBaseUrl
 $env:ANTHROPIC_AUTH_TOKEN = $ResolvedAuthToken
 $env:ANTHROPIC_MODEL = $ResolvedModel
+Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
 
 Write-Host "Switched Claude to LiteLLM ($ResolvedBaseUrl, model $ResolvedModel, token $(Redact-Token $ResolvedAuthToken))"
 

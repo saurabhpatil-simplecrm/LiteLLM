@@ -1,6 +1,6 @@
 # Claude LiteLLM Launcher Scripts
 
-This repo has only two Claude Code launcher scripts:
+This repo is intentionally small. It keeps only two Claude Code launcher scripts plus this documentation:
 
 - `scripts/claude-litellm.ps1` for Windows PowerShell
 - `scripts/claude-litellm.sh` for macOS and Linux Bash
@@ -21,7 +21,7 @@ The scripts do not permanently change your system. They set or clear `ANTHROPIC_
 
 ## What The Modes Do
 
-LiteLLM mode is the default. It sets:
+LiteLLM mode is the default. It clears any stale `ANTHROPIC_API_KEY` and sets:
 
 ```text
 ANTHROPIC_BASE_URL=http://172.22.11.114:4000
@@ -35,6 +35,7 @@ Default-Claude mode clears these variables for this run:
 ANTHROPIC_BASE_URL
 ANTHROPIC_AUTH_TOKEN
 ANTHROPIC_MODEL
+ANTHROPIC_API_KEY
 ```
 
 Use default-Claude mode when you want Claude Code to use its normal config instead of the LiteLLM proxy.
@@ -133,7 +134,7 @@ You can pass a token directly:
 bash ./scripts/claude-litellm.sh --token "sk-your-litellm-key"
 ```
 
-Or set one of these environment variables. The first non-empty value wins:
+Or set one of these environment variables. The first non-empty value wins. Blank process variables do not block a non-empty value from `.env`.
 
 ```text
 CLAUDE_LITELLM_AUTH_TOKEN
@@ -159,7 +160,7 @@ KEY='value'
 export KEY=value
 ```
 
-Only the Claude/LiteLLM variables used by the launcher are loaded. Other `.env` keys are ignored by the Bash script.
+Only the Claude/LiteLLM variables used by the launcher are loaded. When `--token-env <name>` is used, that named key is also loaded from `.env` if it is present.
 
 Use a custom token variable:
 
@@ -169,6 +170,12 @@ Use a custom token variable:
 
 ```bash
 bash ./scripts/claude-litellm.sh --token-env MY_LITELLM_KEY
+```
+
+The custom token variable can come from the shell environment or from the selected `.env` file:
+
+```env
+MY_LITELLM_KEY=sk-your-litellm-key
 ```
 
 An empty token is allowed only when the LiteLLM proxy allows unauthenticated requests.
@@ -292,6 +299,7 @@ The output must show:
 ANTHROPIC_BASE_URL=(cleared)
 ANTHROPIC_AUTH_TOKEN=(cleared)
 ANTHROPIC_MODEL=(cleared)
+ANTHROPIC_API_KEY=(cleared)
 ```
 
 ## Stable Raw Commands

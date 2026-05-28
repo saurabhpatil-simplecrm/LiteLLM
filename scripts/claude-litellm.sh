@@ -217,7 +217,7 @@ valid_env_name() {
 }
 
 load_env_file() {
-  local raw line key value
+  local raw line key value should_load current_value
   if [ "$LOAD_ENV_FILE" -ne 1 ] || [ ! -f "$ENV_FILE" ]; then
     return 0
   fi
@@ -237,11 +237,22 @@ load_env_file() {
 
     case "$key" in
       CLAUDE_LITELLM_BASE_URL|CLAUDE_LITELLM_AUTH_TOKEN|ANTHROPIC_AUTH_TOKEN|LITELLM_TEST_KEY|LITELLM_MASTER_KEY|CLAUDE_LITELLM_MODEL)
-        if [ -z "${!key+x}" ]; then
-          export "$key=$value"
+        should_load=1
+        ;;
+      *)
+        should_load=0
+        if [ -n "$TOKEN_ENV" ] && [ "$key" = "$TOKEN_ENV" ]; then
+          should_load=1
         fi
         ;;
     esac
+
+    if [ "$should_load" -eq 1 ]; then
+      current_value="${!key-}"
+      if [ -z "$(trim "$current_value")" ]; then
+        export "$key=$value"
+      fi
+    fi
   done < "$ENV_FILE"
 }
 
@@ -312,7 +323,7 @@ print_command() {
 }
 
 clear_anthropic_process_env() {
-  unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_MODEL
+  unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_MODEL ANTHROPIC_API_KEY
 }
 
 exec_claude() {
@@ -351,7 +362,7 @@ fi
 
 if [ "$USE_DEFAULT_CLAUDE" -eq 1 ]; then
   if [ "$PRINT_ENV" -eq 1 ]; then
-    printf 'unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_MODEL\n'
+    printf 'unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_MODEL ANTHROPIC_API_KEY\n'
     printf 'claude\n'
     exit 0
   fi
@@ -362,6 +373,7 @@ if [ "$USE_DEFAULT_CLAUDE" -eq 1 ]; then
     printf 'ANTHROPIC_BASE_URL=(cleared)\n'
     printf 'ANTHROPIC_AUTH_TOKEN=(cleared)\n'
     printf 'ANTHROPIC_MODEL=(cleared)\n'
+    printf 'ANTHROPIC_API_KEY=(cleared)\n'
     print_command
     exit 0
   fi
@@ -387,6 +399,11 @@ if [ "$USE_DEFAULT_CLAUDE" -eq 1 ]; then
   exec_claude
 fi
 
+TOKEN_ENV="$(trim "$TOKEN_ENV")"
+if [ -n "$TOKEN_ENV" ]; then
+  valid_env_name "$TOKEN_ENV" || die "Token environment variable name is invalid: $TOKEN_ENV"
+fi
+
 load_env_file
 
 if [ "$BASE_URL_SET" -eq 1 ]; then
@@ -410,9 +427,7 @@ RESOLVED_MODEL="$(trim "$RESOLVED_MODEL")"
 
 if [ "$AUTH_TOKEN_SET" -eq 1 ]; then
   RESOLVED_AUTH_TOKEN="$AUTH_TOKEN"
-elif [ -n "$(trim "$TOKEN_ENV")" ]; then
-  TOKEN_ENV="$(trim "$TOKEN_ENV")"
-  valid_env_name "$TOKEN_ENV" || die "Token environment variable name is invalid: $TOKEN_ENV"
+elif [ -n "$TOKEN_ENV" ]; then
   if [ -z "${!TOKEN_ENV+x}" ]; then
     die "Token environment variable \"$TOKEN_ENV\" was not found."
   fi
@@ -424,6 +439,7 @@ else
 fi
 
 if [ "$PRINT_ENV" -eq 1 ]; then
+  printf 'unset ANTHROPIC_API_KEY\n'
   printf 'export ANTHROPIC_BASE_URL=%s\n' "$(quote_bash "$RESOLVED_BASE_URL")"
   printf 'export ANTHROPIC_AUTH_TOKEN=%s\n' "$(quote_bash "$RESOLVED_AUTH_TOKEN")"
   printf 'export ANTHROPIC_MODEL=%s\n' "$(quote_bash "$RESOLVED_MODEL")"
@@ -479,6 +495,7 @@ fi
 export ANTHROPIC_BASE_URL="$RESOLVED_BASE_URL"
 export ANTHROPIC_AUTH_TOKEN="$RESOLVED_AUTH_TOKEN"
 export ANTHROPIC_MODEL="$RESOLVED_MODEL"
+unset ANTHROPIC_API_KEY
 
 printf 'Switched Claude to LiteLLM (%s, model %s, token %s)\n' \
   "$ANTHROPIC_BASE_URL" \
