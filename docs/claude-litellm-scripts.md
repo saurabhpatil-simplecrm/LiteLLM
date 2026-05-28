@@ -64,7 +64,7 @@ Default-Claude VS Code window:
 bash ./scripts/claude-litellm.sh default --code --args --new-window .
 ```
 
-If VS Code is already running, restart it or open a fresh window from the script so the extension host inherits the selected environment. If `code` is not found, install the VS Code command-line launcher or add it to `PATH`.
+If VS Code is already running, restart it or open a fresh window from the script so the extension host inherits the selected environment. If `code` is not on `PATH`, the scripts try `code-insiders`, `codium`, `codium-insiders`, and common VS Code install paths.
 
 ## Run From GitHub
 
@@ -307,7 +307,7 @@ Update to the latest script from this repo. Older script versions expanded an em
 
 `claude command: not found on PATH` or `code command: not found on PATH`
 
-Install Claude Code or open a shell where `claude --version` works first. For VS Code mode, install the `code` command-line launcher or open a shell where `code --version` works first.
+Install Claude Code or open a shell where `claude --version` works first. For VS Code mode, install the command-line launcher or make sure VS Code, VS Code Insiders, or VSCodium is installed in a standard location.
 
 `ANTHROPIC_AUTH_TOKEN is empty`
 

@@ -20,6 +20,8 @@ PRINT_ENV=0
 USE_DEFAULT_CLAUDE=0
 RUN_CODE=0
 HELP=0
+TARGET_COMMAND="claude"
+TARGET_LABEL="Claude"
 CLAUDE_ARGS=()
 WARNINGS=()
 CLAUDE_ARG_COUNT=0
@@ -320,25 +322,51 @@ redact() {
 }
 
 target_command() {
-  if [ "$RUN_CODE" -eq 1 ]; then
-    printf 'code'
-  else
-    printf 'claude'
-  fi
+  printf '%s' "$TARGET_COMMAND"
 }
 
 target_label() {
-  if [ "$RUN_CODE" -eq 1 ]; then
-    printf 'VS Code'
-  else
-    printf 'Claude'
-  fi
+  printf '%s' "$TARGET_LABEL"
+}
+
+resolve_code_command() {
+  local name candidate
+  for name in code code-insiders codium codium-insiders; do
+    if command -v "$name" >/dev/null 2>&1; then
+      command -v "$name"
+      return 0
+    fi
+  done
+
+  for candidate in \
+    "$HOME/AppData/Local/Programs/Microsoft VS Code/bin/code" \
+    "$HOME/AppData/Local/Programs/Microsoft VS Code/bin/code.cmd" \
+    "$HOME/AppData/Local/Programs/Microsoft VS Code/Code.exe" \
+    "$HOME/AppData/Local/Programs/Microsoft VS Code Insiders/bin/code-insiders" \
+    "$HOME/AppData/Local/Programs/Microsoft VS Code Insiders/bin/code-insiders.cmd" \
+    "$HOME/AppData/Local/Programs/Microsoft VS Code Insiders/Code - Insiders.exe" \
+    "$HOME/AppData/Local/Programs/VSCodium/bin/codium" \
+    "$HOME/AppData/Local/Programs/VSCodium/bin/codium.cmd" \
+    "$HOME/AppData/Local/Programs/VSCodium/VSCodium.exe" \
+    "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code" \
+    "/Applications/Visual Studio Code - Insiders.app/Contents/Resources/app/bin/code-insiders" \
+    "/Applications/VSCodium.app/Contents/Resources/app/bin/codium" \
+    "/usr/local/bin/code" \
+    "/opt/homebrew/bin/code" \
+    "/usr/bin/code"; do
+    if [ -f "$candidate" ]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  printf 'code\n'
 }
 
 print_exec_line() {
   local item command_name
   command_name="$(target_command)"
-  printf '%s' "$command_name"
+  printf '%q' "$command_name"
   if [ "$CLAUDE_ARG_COUNT" -gt 0 ]; then
     for item in "${CLAUDE_ARGS[@]}"; do
       printf ' %q' "$item"
@@ -369,7 +397,7 @@ exec_target() {
 test_target_command() {
   local command_name
   command_name="$(target_command)"
-  if command -v "$command_name" >/dev/null 2>&1; then
+  if command -v "$command_name" >/dev/null 2>&1 || [ -f "$command_name" ]; then
     printf 'OK %s command: ' "$command_name"
     "$command_name" --version
     return $?
@@ -384,6 +412,11 @@ print_vscode_restart_warning() {
     printf 'WARN If VS Code is already running, restart it or open a fresh window from this command so extensions inherit this environment.\n' >&2
   fi
 }
+
+if [ "$RUN_CODE" -eq 1 ]; then
+  TARGET_COMMAND="$(resolve_code_command)"
+  TARGET_LABEL="VS Code"
+fi
 
 if [ "$WARNING_COUNT" -gt 0 ]; then
   for warning in "${WARNINGS[@]}"; do
@@ -430,7 +463,7 @@ if [ "$USE_DEFAULT_CLAUDE" -eq 1 ]; then
     exit "$ok"
   fi
 
-  if ! command -v "$(target_command)" >/dev/null 2>&1; then
+  if ! command -v "$(target_command)" >/dev/null 2>&1 && [ ! -f "$(target_command)" ]; then
     die "Could not find the $(target_command) command on PATH."
   fi
 
@@ -525,7 +558,7 @@ if [ "$DOCTOR" -eq 1 ]; then
   exit "$ok"
 fi
 
-if ! command -v "$(target_command)" >/dev/null 2>&1; then
+if ! command -v "$(target_command)" >/dev/null 2>&1 && [ ! -f "$(target_command)" ]; then
   die "Could not find the $(target_command) command on PATH."
 fi
 

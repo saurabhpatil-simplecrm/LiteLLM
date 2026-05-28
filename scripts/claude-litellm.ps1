@@ -347,6 +347,17 @@ function Quote-PowerShellValue {
     return "'$(([string]$Value).Replace("'", "''"))'"
 }
 
+function Format-CommandPart {
+    param([string]$Value)
+
+    if ($Value -match "^[A-Za-z0-9_./:=@-]+$") {
+        return $Value
+    }
+
+    $escaped = $Value.Replace('`', '``').Replace('"', '`"')
+    return "`"$escaped`""
+}
+
 function Format-CommandLine {
     param(
         [string[]]$Arguments,
@@ -354,20 +365,57 @@ function Format-CommandLine {
     )
 
     $parts = [System.Collections.Generic.List[string]]::new()
-    $parts.Add($Command) | Out-Null
+    $parts.Add((Format-CommandPart $Command)) | Out-Null
     foreach ($argument in $Arguments) {
-        if ($argument -match "^[A-Za-z0-9_./:=@-]+$") {
-            $parts.Add($argument) | Out-Null
-        } else {
-            $escaped = $argument.Replace('`', '``').Replace('"', '`"')
-            $parts.Add("`"$escaped`"") | Out-Null
-        }
+        $parts.Add((Format-CommandPart $argument)) | Out-Null
     }
     return ($parts -join " ")
 }
 
 function Clear-AnthropicProcessEnv {
     Remove-Item Env:ANTHROPIC_BASE_URL, Env:ANTHROPIC_AUTH_TOKEN, Env:ANTHROPIC_MODEL, Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
+}
+
+function Resolve-CodeCommand {
+    $pathCommands = @("code", "code-insiders", "codium", "codium-insiders")
+    foreach ($name in $pathCommands) {
+        $command = Get-Command $name -ErrorAction SilentlyContinue
+        if ($null -ne $command) {
+            if (Test-NonBlank $command.Source) {
+                return $command.Source
+            }
+            if (Test-NonBlank $command.Path) {
+                return $command.Path
+            }
+            return $name
+        }
+    }
+
+    $candidates = [System.Collections.Generic.List[string]]::new()
+    if (Test-NonBlank $env:LOCALAPPDATA) {
+        $candidates.Add((Join-Path $env:LOCALAPPDATA "Programs\Microsoft VS Code\bin\code.cmd")) | Out-Null
+        $candidates.Add((Join-Path $env:LOCALAPPDATA "Programs\Microsoft VS Code\Code.exe")) | Out-Null
+        $candidates.Add((Join-Path $env:LOCALAPPDATA "Programs\Microsoft VS Code Insiders\bin\code-insiders.cmd")) | Out-Null
+        $candidates.Add((Join-Path $env:LOCALAPPDATA "Programs\Microsoft VS Code Insiders\Code - Insiders.exe")) | Out-Null
+        $candidates.Add((Join-Path $env:LOCALAPPDATA "Programs\VSCodium\bin\codium.cmd")) | Out-Null
+        $candidates.Add((Join-Path $env:LOCALAPPDATA "Programs\VSCodium\VSCodium.exe")) | Out-Null
+    }
+    if (Test-NonBlank $env:ProgramFiles) {
+        $candidates.Add((Join-Path $env:ProgramFiles "Microsoft VS Code\bin\code.cmd")) | Out-Null
+        $candidates.Add((Join-Path $env:ProgramFiles "Microsoft VS Code\Code.exe")) | Out-Null
+    }
+    if (Test-NonBlank ${env:ProgramFiles(x86)}) {
+        $candidates.Add((Join-Path ${env:ProgramFiles(x86)} "Microsoft VS Code\bin\code.cmd")) | Out-Null
+        $candidates.Add((Join-Path ${env:ProgramFiles(x86)} "Microsoft VS Code\Code.exe")) | Out-Null
+    }
+
+    foreach ($candidate in $candidates) {
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+            return $candidate
+        }
+    }
+
+    return "code"
 }
 
 function Test-ExternalCommand {
@@ -393,10 +441,11 @@ function Test-ExternalCommand {
 }
 
 function Test-TargetCommand {
-    Test-ExternalCommand -Command $TargetCommand -Label $TargetCommand
+    Test-ExternalCommand -Command $TargetCommand -Label $TargetCommandName
 }
 
-$TargetCommand = if ($RunCode) { "code" } else { "claude" }
+$TargetCommandName = if ($RunCode) { "code" } else { "claude" }
+$TargetCommand = if ($RunCode) { Resolve-CodeCommand } else { "claude" }
 $TargetLabel = if ($RunCode) { "VS Code" } else { "Claude" }
 
 foreach ($warning in $Warnings) {
