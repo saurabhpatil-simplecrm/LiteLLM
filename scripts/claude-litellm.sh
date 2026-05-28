@@ -18,6 +18,7 @@ DOCTOR=0
 SKIP_HEALTH=0
 PRINT_ENV=0
 USE_DEFAULT_CLAUDE=0
+RUN_CODE=0
 HELP=0
 CLAUDE_ARGS=()
 WARNINGS=()
@@ -27,10 +28,11 @@ WARNING_COUNT=0
 usage() {
   cat <<'EOF'
 Usage:
-  bash scripts/claude-litellm.sh [wrapper options] [--claude claude args...]
+  bash scripts/claude-litellm.sh [wrapper options] [--args target args...]
 
-Runs Claude Code with Anthropic-compatible LiteLLM environment variables by default,
-or clears those variables and runs normal Claude with --default.
+Runs Claude Code, or VS Code with --code, using Anthropic-compatible LiteLLM
+environment variables by default. Clears those variables for normal Claude with
+--default.
 
 Defaults:
   base URL: http://172.22.11.114:4000
@@ -48,11 +50,12 @@ Wrapper options:
       --env-file <path>      Load missing values from an env file (default: .env)
       --no-env-file          Do not read .env
       --dry-run              Print the resolved command without launching Claude
-      --doctor               Check config and claude command, then exit
+      --doctor               Check config and target command, then exit
       --skip-health          Skip optional /health check when used with --doctor
       --print-env            Print export commands, then exit
+      --code, --vscode       Launch VS Code instead of claude with the selected env
       --default, --reset     Clear Anthropic env vars and run normal Claude
-      --claude               Treat the rest of the line as Claude args
+      --args, --claude       Treat the rest of the line as target command args
   -h, --help                 Show this help
 
 Examples:
@@ -61,7 +64,9 @@ Examples:
   bash scripts/claude-litellm.sh --token sk-your-key --model zai.glm-5
   bash scripts/claude-litellm.sh --default
   bash scripts/claude-litellm.sh default
-  bash scripts/claude-litellm.sh --dry-run --claude --print "hello"
+  bash scripts/claude-litellm.sh --dry-run --args --print "hello"
+  bash scripts/claude-litellm.sh --code --args --new-window .
+  bash scripts/claude-litellm.sh default --code --args --new-window .
   bash scripts/claude-litellm.sh --print-env
 EOF
 }
@@ -101,7 +106,7 @@ i=0
 while [ "$i" -lt "$INPUT_ARG_COUNT" ]; do
   arg="${INPUT_ARGS[$i]}"
   case "$arg" in
-    --|--claude)
+    --|--args|--target-args|--claude)
       append_remaining "$((i + 1))"
       break
       ;;
@@ -170,6 +175,9 @@ while [ "$i" -lt "$INPUT_ARG_COUNT" ]; do
     --print-env)
       PRINT_ENV=1
       ;;
+    --code|--vscode)
+      RUN_CODE=1
+      ;;
     --default|--reset|--claude-default)
       USE_DEFAULT_CLAUDE=1
       ;;
@@ -177,7 +185,7 @@ while [ "$i" -lt "$INPUT_ARG_COUNT" ]; do
       HELP=1
       ;;
     -*)
-      append_warning "Treating \"$arg\" and the remaining arguments as Claude args. Put wrapper flags first or separate Claude args with \"--\"."
+      append_warning "Treating \"$arg\" and the remaining arguments as target command args. Put wrapper flags first or separate target args with \"--args\"."
       append_remaining "$i"
       break
       ;;
@@ -311,9 +319,26 @@ redact() {
   fi
 }
 
-print_command() {
-  local item
-  printf 'Command: claude'
+target_command() {
+  if [ "$RUN_CODE" -eq 1 ]; then
+    printf 'code'
+  else
+    printf 'claude'
+  fi
+}
+
+target_label() {
+  if [ "$RUN_CODE" -eq 1 ]; then
+    printf 'VS Code'
+  else
+    printf 'Claude'
+  fi
+}
+
+print_exec_line() {
+  local item command_name
+  command_name="$(target_command)"
+  printf '%s' "$command_name"
   if [ "$CLAUDE_ARG_COUNT" -gt 0 ]; then
     for item in "${CLAUDE_ARGS[@]}"; do
       printf ' %q' "$item"
@@ -322,27 +347,42 @@ print_command() {
   printf '\n'
 }
 
+print_command() {
+  printf 'Command: '
+  print_exec_line
+}
+
 clear_anthropic_process_env() {
   unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_MODEL ANTHROPIC_API_KEY
 }
 
-exec_claude() {
+exec_target() {
+  local command_name
+  command_name="$(target_command)"
   if [ "$CLAUDE_ARG_COUNT" -gt 0 ]; then
-    exec claude "${CLAUDE_ARGS[@]}"
+    exec "$command_name" "${CLAUDE_ARGS[@]}"
   fi
 
-  exec claude
+  exec "$command_name"
 }
 
-test_claude_command() {
-  if command -v claude >/dev/null 2>&1; then
-    printf 'OK claude command: '
-    claude --version
+test_target_command() {
+  local command_name
+  command_name="$(target_command)"
+  if command -v "$command_name" >/dev/null 2>&1; then
+    printf 'OK %s command: ' "$command_name"
+    "$command_name" --version
     return $?
   fi
 
-  printf 'FAIL claude command: not found on PATH\n' >&2
+  printf 'FAIL %s command: not found on PATH\n' "$command_name" >&2
   return 1
+}
+
+print_vscode_restart_warning() {
+  if [ "$RUN_CODE" -eq 1 ]; then
+    printf 'WARN If VS Code is already running, restart it or open a fresh window from this command so extensions inherit this environment.\n' >&2
+  fi
 }
 
 if [ "$WARNING_COUNT" -gt 0 ]; then
@@ -363,13 +403,13 @@ fi
 if [ "$USE_DEFAULT_CLAUDE" -eq 1 ]; then
   if [ "$PRINT_ENV" -eq 1 ]; then
     printf 'unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_MODEL ANTHROPIC_API_KEY\n'
-    printf 'claude\n'
+    print_exec_line
     exit 0
   fi
 
   if [ "$DRY_RUN" -eq 1 ]; then
-    printf 'Dry run. Claude was not launched.\n'
-    printf 'Mode=default Claude\n'
+    printf 'Dry run. %s was not launched.\n' "$(target_label)"
+    printf 'Mode=default %s\n' "$(target_label)"
     printf 'ANTHROPIC_BASE_URL=(cleared)\n'
     printf 'ANTHROPIC_AUTH_TOKEN=(cleared)\n'
     printf 'ANTHROPIC_MODEL=(cleared)\n'
@@ -380,8 +420,8 @@ if [ "$USE_DEFAULT_CLAUDE" -eq 1 ]; then
 
   if [ "$DOCTOR" -eq 1 ]; then
     ok=0
-    printf 'Claude default doctor\n'
-    test_claude_command || ok=1
+    printf '%s default doctor\n' "$(target_label)"
+    test_target_command || ok=1
     if [ "$SKIP_HEALTH" -eq 1 ]; then
       printf 'SKIP LiteLLM health check\n'
     else
@@ -390,13 +430,14 @@ if [ "$USE_DEFAULT_CLAUDE" -eq 1 ]; then
     exit "$ok"
   fi
 
-  if ! command -v claude >/dev/null 2>&1; then
-    die "Could not find the claude command on PATH."
+  if ! command -v "$(target_command)" >/dev/null 2>&1; then
+    die "Could not find the $(target_command) command on PATH."
   fi
 
   clear_anthropic_process_env
-  printf 'Switched Claude to default config (ANTHROPIC_* env vars cleared for this run).\n'
-  exec_claude
+  printf 'Switched %s to default config (ANTHROPIC_* env vars cleared for this run).\n' "$(target_label)"
+  print_vscode_restart_warning
+  exec_target
 fi
 
 TOKEN_ENV="$(trim "$TOKEN_ENV")"
@@ -443,12 +484,12 @@ if [ "$PRINT_ENV" -eq 1 ]; then
   printf 'export ANTHROPIC_BASE_URL=%s\n' "$(quote_bash "$RESOLVED_BASE_URL")"
   printf 'export ANTHROPIC_AUTH_TOKEN=%s\n' "$(quote_bash "$RESOLVED_AUTH_TOKEN")"
   printf 'export ANTHROPIC_MODEL=%s\n' "$(quote_bash "$RESOLVED_MODEL")"
-  printf 'claude\n'
+  print_exec_line
   exit 0
 fi
 
 if [ "$DRY_RUN" -eq 1 ]; then
-  printf 'Dry run. Claude was not launched.\n'
+  printf 'Dry run. %s was not launched.\n' "$(target_label)"
   printf 'ANTHROPIC_BASE_URL=%s\n' "$RESOLVED_BASE_URL"
   printf 'ANTHROPIC_AUTH_TOKEN=%s\n' "$(redact "$RESOLVED_AUTH_TOKEN")"
   printf 'ANTHROPIC_MODEL=%s\n' "$RESOLVED_MODEL"
@@ -458,12 +499,12 @@ fi
 
 if [ "$DOCTOR" -eq 1 ]; then
   ok=0
-  printf 'Claude LiteLLM doctor\n'
+  printf '%s LiteLLM doctor\n' "$(target_label)"
   printf 'Base URL: %s\n' "$RESOLVED_BASE_URL"
   printf 'Model: %s\n' "$RESOLVED_MODEL"
   printf 'Token: %s\n' "$(redact "$RESOLVED_AUTH_TOKEN")"
 
-  test_claude_command || ok=1
+  test_target_command || ok=1
 
   if [ "$SKIP_HEALTH" -eq 1 ]; then
     printf 'SKIP LiteLLM health check\n'
@@ -484,8 +525,8 @@ if [ "$DOCTOR" -eq 1 ]; then
   exit "$ok"
 fi
 
-if ! command -v claude >/dev/null 2>&1; then
-  die "Could not find the claude command on PATH."
+if ! command -v "$(target_command)" >/dev/null 2>&1; then
+  die "Could not find the $(target_command) command on PATH."
 fi
 
 if [ -z "$RESOLVED_AUTH_TOKEN" ]; then
@@ -497,9 +538,11 @@ export ANTHROPIC_AUTH_TOKEN="$RESOLVED_AUTH_TOKEN"
 export ANTHROPIC_MODEL="$RESOLVED_MODEL"
 unset ANTHROPIC_API_KEY
 
-printf 'Switched Claude to LiteLLM (%s, model %s, token %s)\n' \
+printf 'Switched %s to LiteLLM (%s, model %s, token %s)\n' \
+  "$(target_label)" \
   "$ANTHROPIC_BASE_URL" \
   "$ANTHROPIC_MODEL" \
   "$(redact "$ANTHROPIC_AUTH_TOKEN")"
+print_vscode_restart_warning
 
-exec_claude
+exec_target

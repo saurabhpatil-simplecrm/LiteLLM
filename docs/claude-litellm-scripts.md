@@ -17,7 +17,7 @@ Raw script base:
 https://raw.githubusercontent.com/saurabhpatil-simplecrm/LiteLLM/main/scripts
 ```
 
-The scripts do not permanently change your system. They set or clear `ANTHROPIC_*` variables only for the Claude process they launch.
+The scripts do not permanently change your system. They set or clear `ANTHROPIC_*` variables only for the Claude or VS Code process they launch.
 
 ## What The Modes Do
 
@@ -39,6 +39,32 @@ ANTHROPIC_API_KEY
 ```
 
 Use default-Claude mode when you want Claude Code to use its normal config instead of the LiteLLM proxy.
+
+## VS Code Claude Extension Toggle
+
+VS Code extensions inherit environment variables from the VS Code process. The scripts can launch VS Code with the same LiteLLM or default-Claude toggle by using `--code` or `--vscode`.
+
+LiteLLM VS Code window:
+
+```powershell
+.\scripts\claude-litellm.ps1 --code --args --new-window .
+```
+
+```bash
+bash ./scripts/claude-litellm.sh --code --args --new-window .
+```
+
+Default-Claude VS Code window:
+
+```powershell
+.\scripts\claude-litellm.ps1 default --code --args --new-window .
+```
+
+```bash
+bash ./scripts/claude-litellm.sh default --code --args --new-window .
+```
+
+If VS Code is already running, restart it or open a fresh window from the script so the extension host inherits the selected environment. If `code` is not found, install the VS Code command-line launcher or add it to `PATH`.
 
 ## Run From GitHub
 
@@ -78,6 +104,18 @@ curl -fsSL https://raw.githubusercontent.com/saurabhpatil-simplecrm/LiteLLM/main
 curl -fsSL https://raw.githubusercontent.com/saurabhpatil-simplecrm/LiteLLM/main/scripts/claude-litellm.sh | bash -s -- default --dry-run
 ```
 
+Run VS Code from GitHub with the selected toggle:
+
+```powershell
+iex "& { $(irm 'https://raw.githubusercontent.com/saurabhpatil-simplecrm/LiteLLM/main/scripts/claude-litellm.ps1') } --code --args --new-window ."
+iex "& { $(irm 'https://raw.githubusercontent.com/saurabhpatil-simplecrm/LiteLLM/main/scripts/claude-litellm.ps1') } default --code --args --new-window ."
+```
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/saurabhpatil-simplecrm/LiteLLM/main/scripts/claude-litellm.sh | bash -s -- --code --args --new-window .
+curl -fsSL https://raw.githubusercontent.com/saurabhpatil-simplecrm/LiteLLM/main/scripts/claude-litellm.sh | bash -s -- default --code --args --new-window .
+```
+
 ## Local Usage
 
 PowerShell:
@@ -100,26 +138,26 @@ bash ./scripts/claude-litellm.sh --default
 bash ./scripts/claude-litellm.sh --reset
 ```
 
-## Passing Claude Args
+## Passing Target Args
 
-Put wrapper options first. Put Claude options after `--claude` or `--`.
+Put wrapper options first. Put target command options after `--args` or `--claude`. When `--code` is used, the same trailing args are passed to `code`.
 
 PowerShell:
 
 ```powershell
-.\scripts\claude-litellm.ps1 --claude --version
-.\scripts\claude-litellm.ps1 --default --claude --version
-.\scripts\claude-litellm.ps1 --claude --print "hello"
-.\scripts\claude-litellm.ps1 -- --version
+.\scripts\claude-litellm.ps1 --args --version
+.\scripts\claude-litellm.ps1 --default --args --version
+.\scripts\claude-litellm.ps1 --args --print "hello"
+.\scripts\claude-litellm.ps1 --code --args --new-window .
 ```
 
 Bash:
 
 ```bash
-bash ./scripts/claude-litellm.sh --claude --version
-bash ./scripts/claude-litellm.sh --default --claude --version
-bash ./scripts/claude-litellm.sh --claude --print "hello"
-bash ./scripts/claude-litellm.sh -- --version
+bash ./scripts/claude-litellm.sh --args --version
+bash ./scripts/claude-litellm.sh --default --args --version
+bash ./scripts/claude-litellm.sh --args --print "hello"
+bash ./scripts/claude-litellm.sh --code --args --new-window .
 ```
 
 ## Tokens And Env Files
@@ -267,9 +305,9 @@ Linux:
 
 Update to the latest script from this repo. Older script versions expanded an empty Bash array under `set -u`, which can fail on macOS Bash 3.2.
 
-`claude command: not found on PATH`
+`claude command: not found on PATH` or `code command: not found on PATH`
 
-Install Claude Code or open a shell where `claude --version` works first.
+Install Claude Code or open a shell where `claude --version` works first. For VS Code mode, install the `code` command-line launcher or open a shell where `code --version` works first.
 
 `ANTHROPIC_AUTH_TOKEN is empty`
 

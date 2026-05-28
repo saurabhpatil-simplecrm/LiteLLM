@@ -18,6 +18,7 @@ $Doctor = $false
 $SkipHealth = $false
 $PrintEnv = $false
 $UseDefaultClaude = $false
+$RunCode = $false
 $ShowHelp = $false
 $ClaudeArgs = [System.Collections.Generic.List[string]]::new()
 $Warnings = [System.Collections.Generic.List[string]]::new()
@@ -26,10 +27,11 @@ $InputArgs = @($args)
 function Show-Usage {
     @"
 Usage:
-  .\scripts\claude-litellm.ps1 [wrapper options] [--claude claude args...]
+  .\scripts\claude-litellm.ps1 [wrapper options] [--args target args...]
 
-Runs Claude Code with Anthropic-compatible LiteLLM environment variables by default,
-or clears those variables and runs normal Claude with --default.
+Runs Claude Code, or VS Code with --code, using Anthropic-compatible LiteLLM
+environment variables by default. Clears those variables for normal Claude with
+--default.
 
 Defaults:
   base URL: $DefaultBaseUrl
@@ -47,11 +49,12 @@ Wrapper options:
       --env-file <path>      Load missing values from an env file (default: .env)
       --no-env-file          Do not read .env
       --dry-run              Print the resolved command without launching Claude
-      --doctor               Check config, claude command, and LiteLLM /health
+      --doctor               Check config, target command, and LiteLLM /health
       --skip-health          Skip /health check when used with --doctor
       --print-env            Print PowerShell env commands, then exit
+      --code, --vscode       Launch VS Code instead of claude with the selected env
       --default, --reset     Clear Anthropic env vars and run normal Claude
-      --claude               Treat the rest of the line as Claude args
+      --args, --claude       Treat the rest of the line as target command args
   -h, --help                 Show this help
 
 Examples:
@@ -60,7 +63,9 @@ Examples:
   .\scripts\claude-litellm.ps1 --token sk-your-key --model zai.glm-5
   .\scripts\claude-litellm.ps1 --default
   .\scripts\claude-litellm.ps1 default
-  .\scripts\claude-litellm.ps1 --dry-run --claude --print "hello"
+  .\scripts\claude-litellm.ps1 --dry-run --args --print "hello"
+  .\scripts\claude-litellm.ps1 --code --args --new-window .
+  .\scripts\claude-litellm.ps1 default --code --args --new-window .
   .\scripts\claude-litellm.ps1 --print-env
 "@
 }
@@ -94,7 +99,7 @@ function Add-RemainingClaudeArgs {
 :parse for ($i = 0; $i -lt $InputArgs.Count; $i++) {
     $arg = [string]$InputArgs[$i]
 
-    if ($arg -eq "--" -or $arg -eq "--claude") {
+    if ($arg -in @("--", "--args", "--target-args", "--claude")) {
         Add-RemainingClaudeArgs -Values $InputArgs -StartIndex ($i + 1)
         break parse
     }
@@ -186,6 +191,10 @@ function Add-RemainingClaudeArgs {
             $PrintEnv = $true
             continue
         }
+        { $_ -in @("--code", "--vscode") } {
+            $RunCode = $true
+            continue
+        }
         { $_ -in @("--default", "--reset", "--claude-default") } {
             $UseDefaultClaude = $true
             continue
@@ -196,7 +205,7 @@ function Add-RemainingClaudeArgs {
         }
         default {
             if ($arg.StartsWith("-")) {
-                $Warnings.Add("Treating `"$arg`" and the remaining arguments as Claude args. Put wrapper flags first or separate Claude args with `"--`".") | Out-Null
+                $Warnings.Add("Treating `"$arg`" and the remaining arguments as target command args. Put wrapper flags first or separate target args with `"--args`".") | Out-Null
             }
             Add-RemainingClaudeArgs -Values $InputArgs -StartIndex $i
             break parse
@@ -339,10 +348,13 @@ function Quote-PowerShellValue {
 }
 
 function Format-CommandLine {
-    param([string[]]$Arguments)
+    param(
+        [string[]]$Arguments,
+        [string]$Command = "claude"
+    )
 
     $parts = [System.Collections.Generic.List[string]]::new()
-    $parts.Add("claude") | Out-Null
+    $parts.Add($Command) | Out-Null
     foreach ($argument in $Arguments) {
         if ($argument -match "^[A-Za-z0-9_./:=@-]+$") {
             $parts.Add($argument) | Out-Null
@@ -358,22 +370,34 @@ function Clear-AnthropicProcessEnv {
     Remove-Item Env:ANTHROPIC_BASE_URL, Env:ANTHROPIC_AUTH_TOKEN, Env:ANTHROPIC_MODEL, Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
 }
 
-function Test-ClaudeCommand {
-    $claudeCommand = Get-Command claude -ErrorAction SilentlyContinue
-    if ($null -eq $claudeCommand) {
-        [Console]::Error.WriteLine("FAIL claude command: not found on PATH")
+function Test-ExternalCommand {
+    param(
+        [string]$Command,
+        [string]$Label
+    )
+
+    $externalCommand = Get-Command $Command -ErrorAction SilentlyContinue
+    if ($null -eq $externalCommand) {
+        [Console]::Error.WriteLine("FAIL $Label command: not found on PATH")
         return $false
     }
 
-    $versionOutput = & claude --version 2>&1
+    $versionOutput = & $Command --version 2>&1
     if ($LASTEXITCODE -eq 0) {
-        Write-Host "OK claude command: $versionOutput"
+        Write-Host "OK $Label command: $((@($versionOutput) -join " ").Trim())"
         return $true
     }
 
-    [Console]::Error.WriteLine("FAIL claude command: $versionOutput")
+    [Console]::Error.WriteLine("FAIL $Label command: $((@($versionOutput) -join " ").Trim())")
     return $false
 }
+
+function Test-TargetCommand {
+    Test-ExternalCommand -Command $TargetCommand -Label $TargetCommand
+}
+
+$TargetCommand = if ($RunCode) { "code" } else { "claude" }
+$TargetLabel = if ($RunCode) { "VS Code" } else { "Claude" }
 
 foreach ($warning in $Warnings) {
     Write-Warning $warning
@@ -386,25 +410,25 @@ if ($UseDefaultClaude -and ($BaseUrlSet -or $AuthTokenSet -or $ModelSet -or (Tes
 if ($UseDefaultClaude) {
     if ($PrintEnv) {
         Write-Output "Remove-Item Env:ANTHROPIC_BASE_URL, Env:ANTHROPIC_AUTH_TOKEN, Env:ANTHROPIC_MODEL, Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue"
-        Write-Output "claude"
+        Write-Output "$(Format-CommandLine -Arguments $ClaudeArgs.ToArray() -Command $TargetCommand)"
         exit 0
     }
 
     if ($DryRun) {
-        Write-Host "Dry run. Claude was not launched."
-        Write-Host "Mode=default Claude"
+        Write-Host "Dry run. $TargetLabel was not launched."
+        Write-Host "Mode=default $TargetLabel"
         Write-Host "ANTHROPIC_BASE_URL=(cleared)"
         Write-Host "ANTHROPIC_AUTH_TOKEN=(cleared)"
         Write-Host "ANTHROPIC_MODEL=(cleared)"
         Write-Host "ANTHROPIC_API_KEY=(cleared)"
-        Write-Host "Command: $(Format-CommandLine $ClaudeArgs.ToArray())"
+        Write-Host "Command: $(Format-CommandLine -Arguments $ClaudeArgs.ToArray() -Command $TargetCommand)"
         exit 0
     }
 
     if ($Doctor) {
         $ok = $true
-        Write-Host "Claude default doctor"
-        if (-not (Test-ClaudeCommand)) {
+        Write-Host "$TargetLabel default doctor"
+        if (-not (Test-TargetCommand)) {
             $ok = $false
         }
         if ($SkipHealth) {
@@ -418,14 +442,17 @@ if ($UseDefaultClaude) {
         exit 1
     }
 
-    $claudeCommandForDefaultRun = Get-Command claude -ErrorAction SilentlyContinue
-    if ($null -eq $claudeCommandForDefaultRun) {
-        throw "Could not find the claude command on PATH."
+    $targetCommandForDefaultRun = Get-Command $TargetCommand -ErrorAction SilentlyContinue
+    if ($null -eq $targetCommandForDefaultRun) {
+        throw "Could not find the $TargetCommand command on PATH."
     }
 
     Clear-AnthropicProcessEnv
-    Write-Host "Switched Claude to default config (ANTHROPIC_* env vars cleared for this run)."
-    & claude @($ClaudeArgs.ToArray())
+    Write-Host "Switched $TargetLabel to default config (ANTHROPIC_* env vars cleared for this run)."
+    if ($RunCode) {
+        Write-Warning "If VS Code is already running, restart it or open a fresh window from this command so extensions inherit this environment."
+    }
+    & $TargetCommand @($ClaudeArgs.ToArray())
     exit $LASTEXITCODE
 }
 
@@ -479,27 +506,27 @@ if ($PrintEnv) {
     Write-Output "`$env:ANTHROPIC_BASE_URL = $(Quote-PowerShellValue $ResolvedBaseUrl)"
     Write-Output "`$env:ANTHROPIC_AUTH_TOKEN = $(Quote-PowerShellValue $ResolvedAuthToken)"
     Write-Output "`$env:ANTHROPIC_MODEL = $(Quote-PowerShellValue $ResolvedModel)"
-    Write-Output "claude"
+    Write-Output "$(Format-CommandLine -Arguments $ClaudeArgs.ToArray() -Command $TargetCommand)"
     exit 0
 }
 
 if ($DryRun) {
-    Write-Host "Dry run. Claude was not launched."
+    Write-Host "Dry run. $TargetLabel was not launched."
     Write-Host "ANTHROPIC_BASE_URL=$ResolvedBaseUrl"
     Write-Host "ANTHROPIC_AUTH_TOKEN=$(Redact-Token $ResolvedAuthToken)"
     Write-Host "ANTHROPIC_MODEL=$ResolvedModel"
-    Write-Host "Command: $(Format-CommandLine $ClaudeArgs.ToArray())"
+    Write-Host "Command: $(Format-CommandLine -Arguments $ClaudeArgs.ToArray() -Command $TargetCommand)"
     exit 0
 }
 
 if ($Doctor) {
     $ok = $true
-    Write-Host "Claude LiteLLM doctor"
+    Write-Host "$TargetLabel LiteLLM doctor"
     Write-Host "Base URL: $ResolvedBaseUrl"
     Write-Host "Model: $ResolvedModel"
     Write-Host "Token: $(Redact-Token $ResolvedAuthToken)"
 
-    if (-not (Test-ClaudeCommand)) {
+    if (-not (Test-TargetCommand)) {
         $ok = $false
     }
 
@@ -526,9 +553,9 @@ if ($Doctor) {
     exit 1
 }
 
-$claudeCommandForRun = Get-Command claude -ErrorAction SilentlyContinue
-if ($null -eq $claudeCommandForRun) {
-    throw "Could not find the claude command on PATH."
+$targetCommandForRun = Get-Command $TargetCommand -ErrorAction SilentlyContinue
+if ($null -eq $targetCommandForRun) {
+    throw "Could not find the $TargetCommand command on PATH."
 }
 
 if ([string]::IsNullOrEmpty($ResolvedAuthToken)) {
@@ -540,7 +567,10 @@ $env:ANTHROPIC_AUTH_TOKEN = $ResolvedAuthToken
 $env:ANTHROPIC_MODEL = $ResolvedModel
 Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
 
-Write-Host "Switched Claude to LiteLLM ($ResolvedBaseUrl, model $ResolvedModel, token $(Redact-Token $ResolvedAuthToken))"
+Write-Host "Switched $TargetLabel to LiteLLM ($ResolvedBaseUrl, model $ResolvedModel, token $(Redact-Token $ResolvedAuthToken))"
+if ($RunCode) {
+    Write-Warning "If VS Code is already running, restart it or open a fresh window from this command so extensions inherit this environment."
+}
 
-& claude @($ClaudeArgs.ToArray())
+& $TargetCommand @($ClaudeArgs.ToArray())
 exit $LASTEXITCODE
