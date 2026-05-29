@@ -19,6 +19,8 @@ $SkipHealth = $false
 $PrintEnv = $false
 $UseDefaultClaude = $false
 $RunCode = $false
+$CodeCommand = $null
+$CodeCommandSet = $false
 $ShowHelp = $false
 $ClaudeArgs = [System.Collections.Generic.List[string]]::new()
 $Warnings = [System.Collections.Generic.List[string]]::new()
@@ -53,6 +55,7 @@ Wrapper options:
       --skip-health          Skip /health check when used with --doctor
       --print-env            Print PowerShell env commands, then exit
       --code, --vscode       Launch VS Code instead of claude with the selected env
+      --code-command <cmd>    Use a custom VS Code command or path
       --default, --reset     Clear Anthropic env vars and run normal Claude
       --args, --claude       Treat the rest of the line as target command args
   -h, --help                 Show this help
@@ -65,6 +68,7 @@ Examples:
   .\scripts\claude-litellm.ps1 default
   .\scripts\claude-litellm.ps1 --dry-run --args --print "hello"
   .\scripts\claude-litellm.ps1 --code --args --new-window .
+  .\scripts\claude-litellm.ps1 --code-command code-insiders --args --new-window .
   .\scripts\claude-litellm.ps1 default --code --args --new-window .
   .\scripts\claude-litellm.ps1 --print-env
 "@
@@ -141,6 +145,12 @@ function Add-RemainingClaudeArgs {
         $EnvFile = $arg.Substring("--env-file=".Length)
         continue
     }
+    if ($arg.StartsWith("--code-command=") -or $arg.StartsWith("--vscode-command=")) {
+        $CodeCommand = $arg.Substring($arg.IndexOf("=") + 1)
+        $CodeCommandSet = $true
+        $RunCode = $true
+        continue
+    }
 
     switch ($arg) {
         { $_ -in @("--base-url", "-u") } {
@@ -168,6 +178,16 @@ function Add-RemainingClaudeArgs {
         }
         "--env-file" {
             $EnvFile = Read-RequiredValue -Values $InputArgs -Index $i -Flag $arg
+            $i++
+            continue
+        }
+        { $_ -in @("--code-command", "--vscode-command") } {
+            $CodeCommand = Read-RequiredValue -Values $InputArgs -Index $i -Flag $arg
+            if ($CodeCommand -match "^\s*--") {
+                throw "Missing value for $arg."
+            }
+            $CodeCommandSet = $true
+            $RunCode = $true
             $i++
             continue
         }
@@ -445,7 +465,16 @@ function Test-TargetCommand {
 }
 
 $TargetCommandName = if ($RunCode) { "code" } else { "claude" }
-$TargetCommand = if ($RunCode) { Resolve-CodeCommand } else { "claude" }
+if ($RunCode -and $CodeCommandSet) {
+    if (-not (Test-NonBlank $CodeCommand)) {
+        throw "Code command cannot be empty."
+    }
+    $TargetCommand = $CodeCommand.Trim()
+} elseif ($RunCode) {
+    $TargetCommand = Resolve-CodeCommand
+} else {
+    $TargetCommand = "claude"
+}
 $TargetLabel = if ($RunCode) { "VS Code" } else { "Claude" }
 
 foreach ($warning in $Warnings) {

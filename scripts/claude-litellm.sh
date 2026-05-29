@@ -19,6 +19,8 @@ SKIP_HEALTH=0
 PRINT_ENV=0
 USE_DEFAULT_CLAUDE=0
 RUN_CODE=0
+CODE_COMMAND=""
+CODE_COMMAND_SET=0
 HELP=0
 TARGET_COMMAND="claude"
 TARGET_LABEL="Claude"
@@ -56,6 +58,7 @@ Wrapper options:
       --skip-health          Skip optional /health check when used with --doctor
       --print-env            Print export commands, then exit
       --code, --vscode       Launch VS Code instead of claude with the selected env
+      --code-command <cmd>    Use a custom VS Code command or path
       --default, --reset     Clear Anthropic env vars and run normal Claude
       --args, --claude       Treat the rest of the line as target command args
   -h, --help                 Show this help
@@ -68,6 +71,7 @@ Examples:
   bash scripts/claude-litellm.sh default
   bash scripts/claude-litellm.sh --dry-run --args --print "hello"
   bash scripts/claude-litellm.sh --code --args --new-window .
+  bash scripts/claude-litellm.sh --code-command code-insiders --args --new-window .
   bash scripts/claude-litellm.sh default --code --args --new-window .
   bash scripts/claude-litellm.sh --print-env
 EOF
@@ -139,6 +143,11 @@ while [ "$i" -lt "$INPUT_ARG_COUNT" ]; do
     --env-file=*)
       ENV_FILE="${arg#--env-file=}"
       ;;
+    --code-command=*|--vscode-command=*)
+      CODE_COMMAND="${arg#*=}"
+      CODE_COMMAND_SET=1
+      RUN_CODE=1
+      ;;
     --base-url|-u)
       BASE_URL="$(read_required_value "$i" "$arg")"
       BASE_URL_SET=1
@@ -160,6 +169,15 @@ while [ "$i" -lt "$INPUT_ARG_COUNT" ]; do
       ;;
     --env-file)
       ENV_FILE="$(read_required_value "$i" "$arg")"
+      i=$((i + 1))
+      ;;
+    --code-command|--vscode-command)
+      CODE_COMMAND="$(read_required_value "$i" "$arg")"
+      if [ -z "$CODE_COMMAND" ] || [[ "$CODE_COMMAND" == --* ]]; then
+        die "Missing value for $arg."
+      fi
+      CODE_COMMAND_SET=1
+      RUN_CODE=1
       i=$((i + 1))
       ;;
     --no-env-file)
@@ -414,7 +432,12 @@ print_vscode_restart_warning() {
 }
 
 if [ "$RUN_CODE" -eq 1 ]; then
-  TARGET_COMMAND="$(resolve_code_command)"
+  if [ "$CODE_COMMAND_SET" -eq 1 ]; then
+    TARGET_COMMAND="$(trim "$CODE_COMMAND")"
+    [ -n "$TARGET_COMMAND" ] || die "Code command cannot be empty."
+  else
+    TARGET_COMMAND="$(resolve_code_command)"
+  fi
   TARGET_LABEL="VS Code"
 fi
 

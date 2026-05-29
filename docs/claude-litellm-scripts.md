@@ -44,6 +44,8 @@ Use default-Claude mode when you want Claude Code to use its normal config inste
 
 VS Code extensions inherit environment variables from the VS Code process. The scripts can launch VS Code with the same LiteLLM or default-Claude toggle by using `--code` or `--vscode`.
 
+This works for Claude extensions or extension versions that read the inherited `ANTHROPIC_*` environment variables or launch Claude Code from the VS Code process environment. If an extension version uses only its own account, API-key, or server settings, configure that extension setting separately.
+
 LiteLLM VS Code window:
 
 ```powershell
@@ -64,7 +66,17 @@ Default-Claude VS Code window:
 bash ./scripts/claude-litellm.sh default --code --args --new-window .
 ```
 
-If VS Code is already running, restart it or open a fresh window from the script so the extension host inherits the selected environment. If `code` is not on `PATH`, the scripts try `code-insiders`, `codium`, `codium-insiders`, and common VS Code install paths.
+If VS Code is already running, restart it or open a fresh window from the script so the extension host inherits the selected environment. If `code` is not on `PATH`, the scripts try `code-insiders`, `codium`, `codium-insiders`, and common VS Code install paths. Use `--code-command <command-or-path>` for custom VS Code builds, forks, or nonstandard install locations.
+
+Custom VS Code command:
+
+```powershell
+.\scripts\claude-litellm.ps1 --code-command code-insiders --args --new-window .
+```
+
+```bash
+bash ./scripts/claude-litellm.sh --code-command code-insiders --args --new-window .
+```
 
 ## Run From GitHub
 
@@ -151,6 +163,7 @@ PowerShell:
 .\scripts\claude-litellm.ps1 --default --args --version
 .\scripts\claude-litellm.ps1 --args --print "hello"
 .\scripts\claude-litellm.ps1 --code --args --new-window .
+.\scripts\claude-litellm.ps1 --code-command code-insiders --args --new-window .
 ```
 
 Bash:
@@ -160,6 +173,7 @@ bash ./scripts/claude-litellm.sh --args --version
 bash ./scripts/claude-litellm.sh --default --args --version
 bash ./scripts/claude-litellm.sh --args --print "hello"
 bash ./scripts/claude-litellm.sh --code --args --new-window .
+bash ./scripts/claude-litellm.sh --code-command code-insiders --args --new-window .
 ```
 
 ## Tokens And Env Files
