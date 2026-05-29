@@ -1,38 +1,72 @@
-# Claude LiteLLM Scripts
+# Claude LiteLLM Launcher
 
-This repository contains two Claude Code launcher scripts:
+Use these commands to switch Claude Code between:
 
-- `scripts/claude-litellm.ps1` for Windows PowerShell
-- `scripts/claude-litellm.sh` for Linux and macOS Bash
+- **LiteLLM mode**: Claude talks through the LiteLLM proxy.
+- **Default Claude mode**: Claude uses its normal/original settings.
 
-They start Claude in LiteLLM mode by default, or in default-Claude mode when you pass `default`, `--default`, or `--reset`. Default-Claude mode clears stale Anthropic proxy and API-key overrides for that run. Pass `--code` or `--vscode` to launch VS Code from the same selected environment so Claude extensions can inherit the toggle. If `code` is not on `PATH`, the scripts try VS Code Insiders, VSCodium, and common install paths. Use `--code-command <command-or-path>` for custom VS Code builds.
+Nothing is permanently changed. The scripts set or clear Claude environment variables only for the app they start.
 
-Full usage is in [docs/claude-litellm-scripts.md](docs/claude-litellm-scripts.md).
+## Pick One Command
 
-## Raw Run
+### Windows PowerShell
 
-PowerShell:
+Claude with LiteLLM:
 
 ```powershell
 iex "& { $(irm 'https://raw.githubusercontent.com/saurabhpatil-simplecrm/LiteLLM/main/scripts/claude-litellm.ps1') }"
+```
+
+Claude with default/original settings:
+
+```powershell
 iex "& { $(irm 'https://raw.githubusercontent.com/saurabhpatil-simplecrm/LiteLLM/main/scripts/claude-litellm.ps1') } default"
 ```
 
-Bash:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/saurabhpatil-simplecrm/LiteLLM/main/scripts/claude-litellm.sh | bash
-curl -fsSL https://raw.githubusercontent.com/saurabhpatil-simplecrm/LiteLLM/main/scripts/claude-litellm.sh | bash -s -- default
-```
-
-VS Code examples:
+VS Code with LiteLLM:
 
 ```powershell
 iex "& { $(irm 'https://raw.githubusercontent.com/saurabhpatil-simplecrm/LiteLLM/main/scripts/claude-litellm.ps1') } --code --args --new-window ."
+```
+
+VS Code with default/original settings:
+
+```powershell
 iex "& { $(irm 'https://raw.githubusercontent.com/saurabhpatil-simplecrm/LiteLLM/main/scripts/claude-litellm.ps1') } default --code --args --new-window ."
 ```
 
+### macOS, Linux, Or Git Bash
+
+Claude with LiteLLM:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/saurabhpatil-simplecrm/LiteLLM/main/scripts/claude-litellm.sh | bash
+```
+
+Claude with default/original settings:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/saurabhpatil-simplecrm/LiteLLM/main/scripts/claude-litellm.sh | bash -s -- default
+```
+
+VS Code with LiteLLM:
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/saurabhpatil-simplecrm/LiteLLM/main/scripts/claude-litellm.sh | bash -s -- --code --args --new-window .
+```
+
+VS Code with default/original settings:
+
+```bash
 curl -fsSL https://raw.githubusercontent.com/saurabhpatil-simplecrm/LiteLLM/main/scripts/claude-litellm.sh | bash -s -- default --code --args --new-window .
 ```
+
+## Important Notes
+
+- On Windows, use the PowerShell commands.
+- Run Bash commands from Bash, Git Bash, macOS Terminal, or Linux Terminal.
+- If VS Code is already open, close it or open a new window from the command above so extensions inherit the selected mode.
+- VS Code Stable, VS Code Insiders, and VSCodium are auto-detected when possible.
+- For a custom VS Code command, add `--code-command <command-or-path>`.
+
+Full details are in [docs/claude-litellm-scripts.md](docs/claude-litellm-scripts.md).
