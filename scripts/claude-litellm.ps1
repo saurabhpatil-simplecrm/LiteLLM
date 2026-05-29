@@ -17,6 +17,9 @@ $DryRun = $false
 $Doctor = $false
 $SkipHealth = $false
 $PrintEnv = $false
+$SaveConfig = $false
+$SaveGlobalConfig = $false
+$SettingsFile = $null
 $UseDefaultClaude = $false
 $RunCode = $false
 $CodeCommand = $null
@@ -54,6 +57,9 @@ Wrapper options:
       --doctor               Check config, target command, and LiteLLM /health
       --skip-health          Skip /health check when used with --doctor
       --print-env            Print PowerShell env commands, then exit
+      --save                 Save LiteLLM URL, model, and token to .env, then exit
+      --global, --user       Save selected mode to ~/.claude/settings.json, then exit
+      --settings-file <path>  Use a custom Claude Code settings.json with --global
       --code, --vscode       Launch VS Code instead of claude with the selected env
       --code-command <cmd>    Use a custom VS Code command or path
       --default, --reset     Clear Anthropic env vars and run normal Claude
@@ -64,6 +70,9 @@ Examples:
   .\scripts\claude-litellm.ps1
   .\scripts\claude-litellm.ps1 litellm
   .\scripts\claude-litellm.ps1 --token sk-your-key --model zai.glm-5
+  .\scripts\claude-litellm.ps1 --token sk-your-key --model zai.glm-5 --save
+  .\scripts\claude-litellm.ps1 --token sk-your-key --model zai.glm-5 --global
+  .\scripts\claude-litellm.ps1 default --global
   .\scripts\claude-litellm.ps1 --default
   .\scripts\claude-litellm.ps1 default
   .\scripts\claude-litellm.ps1 --dry-run --args --print "hello"
@@ -145,6 +154,10 @@ function Add-RemainingClaudeArgs {
         $EnvFile = $arg.Substring("--env-file=".Length)
         continue
     }
+    if ($arg.StartsWith("--settings-file=") -or $arg.StartsWith("--claude-settings=")) {
+        $SettingsFile = $arg.Substring($arg.IndexOf("=") + 1)
+        continue
+    }
     if ($arg.StartsWith("--code-command=") -or $arg.StartsWith("--vscode-command=")) {
         $CodeCommand = $arg.Substring($arg.IndexOf("=") + 1)
         $CodeCommandSet = $true
@@ -181,6 +194,11 @@ function Add-RemainingClaudeArgs {
             $i++
             continue
         }
+        { $_ -in @("--settings-file", "--claude-settings") } {
+            $SettingsFile = Read-RequiredValue -Values $InputArgs -Index $i -Flag $arg
+            $i++
+            continue
+        }
         { $_ -in @("--code-command", "--vscode-command") } {
             $CodeCommand = Read-RequiredValue -Values $InputArgs -Index $i -Flag $arg
             if ($CodeCommand -match "^\s*--") {
@@ -209,6 +227,14 @@ function Add-RemainingClaudeArgs {
         }
         "--print-env" {
             $PrintEnv = $true
+            continue
+        }
+        "--save" {
+            $SaveConfig = $true
+            continue
+        }
+        { $_ -in @("--global", "--user", "--user-env", "--vscode-global", "--global-vscode") } {
+            $SaveGlobalConfig = $true
             continue
         }
         { $_ -in @("--code", "--vscode") } {
@@ -396,6 +422,261 @@ function Clear-AnthropicProcessEnv {
     Remove-Item Env:ANTHROPIC_BASE_URL, Env:ANTHROPIC_AUTH_TOKEN, Env:ANTHROPIC_MODEL, Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
 }
 
+function Format-EnvFileAssignment {
+    param(
+        [string]$Key,
+        [AllowNull()][string]$Value
+    )
+
+    $stringValue = [string]$Value
+    if ($stringValue -match "[`r`n]") {
+        throw "Cannot save $Key because the value contains a newline."
+    }
+    return "$Key=$stringValue"
+}
+
+function Save-EnvFileValues {
+    param(
+        [string]$Path,
+        [hashtable]$Values
+    )
+
+    $fullPath = [System.IO.Path]::GetFullPath($Path)
+    $parent = Split-Path -Parent $fullPath
+    if (Test-NonBlank $parent -and -not (Test-Path -LiteralPath $parent)) {
+        New-Item -ItemType Directory -Path $parent -Force | Out-Null
+    }
+
+    $lines = @()
+    if (Test-Path -LiteralPath $fullPath) {
+        $lines = [System.IO.File]::ReadAllLines($fullPath)
+    }
+
+    $seen = @{}
+    $updated = [System.Collections.Generic.List[string]]::new()
+    foreach ($rawLine in $lines) {
+        if ($rawLine -match "^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=") {
+            $key = $Matches[1]
+            if ($Values.ContainsKey($key)) {
+                $updated.Add((Format-EnvFileAssignment -Key $key -Value $Values[$key])) | Out-Null
+                $seen[$key] = $true
+                continue
+            }
+        }
+        $updated.Add($rawLine) | Out-Null
+    }
+
+    foreach ($key in $Values.Keys) {
+        if (-not $seen.ContainsKey($key)) {
+            $updated.Add((Format-EnvFileAssignment -Key $key -Value $Values[$key])) | Out-Null
+        }
+    }
+
+    $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+    [System.IO.File]::WriteAllLines($fullPath, $updated.ToArray(), $utf8NoBom)
+    return $fullPath
+}
+
+function Resolve-ClaudeSettingsPath {
+    param([AllowNull()][string]$Path)
+
+    if (Test-NonBlank $Path) {
+        return [System.IO.Path]::GetFullPath($Path)
+    }
+
+    $homePath = [Environment]::GetFolderPath("UserProfile")
+    if (-not (Test-NonBlank $homePath)) {
+        $homePath = $HOME
+    }
+    if (-not (Test-NonBlank $homePath)) {
+        throw "Could not find your home folder for Claude Code settings."
+    }
+
+    return [System.IO.Path]::GetFullPath((Join-Path (Join-Path $homePath ".claude") "settings.json"))
+}
+
+function Resolve-ClaudeSettingsStatePath {
+    param([string]$SettingsPath)
+
+    $parent = Split-Path -Parent $SettingsPath
+    if (-not (Test-NonBlank $parent)) {
+        $parent = "."
+    }
+    return [System.IO.Path]::GetFullPath((Join-Path $parent "claude-litellm-state.json"))
+}
+
+function Set-JsonObjectProperty {
+    param(
+        [pscustomobject]$Object,
+        [string]$Name,
+        [AllowNull()]$Value
+    )
+
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -eq $property) {
+        $Object | Add-Member -NotePropertyName $Name -NotePropertyValue $Value
+    } else {
+        $property.Value = $Value
+    }
+}
+
+function Remove-JsonObjectProperty {
+    param(
+        [pscustomobject]$Object,
+        [string]$Name
+    )
+
+    if ($null -ne $Object.PSObject.Properties[$Name]) {
+        $Object.PSObject.Properties.Remove($Name)
+    }
+}
+
+function Read-ClaudeSettingsJson {
+    param([string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return [pscustomobject]@{}
+    }
+
+    $raw = [System.IO.File]::ReadAllText($Path)
+    if (-not (Test-NonBlank $raw)) {
+        return [pscustomobject]@{}
+    }
+
+    try {
+        $settings = $raw | ConvertFrom-Json
+    } catch {
+        throw "Could not read $Path as JSON. Fix the JSON first, then run this script again. $($_.Exception.Message)"
+    }
+
+    if ($null -eq $settings -or $settings -isnot [pscustomobject]) {
+        throw "$Path must contain a JSON object."
+    }
+
+    return $settings
+}
+
+function Write-ClaudeSettingsJson {
+    param(
+        [string]$Path,
+        [pscustomobject]$Settings
+    )
+
+    $parent = Split-Path -Parent $Path
+    if (Test-NonBlank $parent -and -not (Test-Path -LiteralPath $parent)) {
+        New-Item -ItemType Directory -Path $parent -Force | Out-Null
+    }
+
+    $json = $Settings | ConvertTo-Json -Depth 100
+    $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+    [System.IO.File]::WriteAllText($Path, "$json$([Environment]::NewLine)", $utf8NoBom)
+}
+
+function Save-ClaudeSettingsMode {
+    param(
+        [string]$Mode,
+        [AllowNull()][string]$Path,
+        [AllowNull()][string]$BaseUrl,
+        [AllowNull()][string]$AuthToken,
+        [AllowNull()][string]$Model
+    )
+
+    $fullPath = Resolve-ClaudeSettingsPath -Path $Path
+    $statePath = Resolve-ClaudeSettingsStatePath -SettingsPath $fullPath
+    $managedEnvNames = @("ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL", "ANTHROPIC_API_KEY")
+    $removeStateAfterWrite = $false
+    $settings = Read-ClaudeSettingsJson -Path $fullPath
+    $envSettings = $settings.PSObject.Properties["env"]
+    if ($null -eq $envSettings -or $null -eq $envSettings.Value) {
+        $envObject = [pscustomobject]@{}
+        Set-JsonObjectProperty -Object $settings -Name "env" -Value $envObject
+    } elseif ($envSettings.Value -isnot [pscustomobject]) {
+        throw "The env value in $fullPath must be a JSON object. Fix it first so this script does not overwrite unrelated settings."
+    } else {
+        $envObject = $envSettings.Value
+    }
+
+    if ($Mode -eq "litellm") {
+        foreach ($item in @(
+            @{ Name = "ANTHROPIC_BASE_URL"; Value = $BaseUrl },
+            @{ Name = "ANTHROPIC_AUTH_TOKEN"; Value = $AuthToken },
+            @{ Name = "ANTHROPIC_MODEL"; Value = $Model }
+        )) {
+            if ([string]$item.Value -match "[`r`n]") {
+                throw "Cannot save $($item.Name) because the value contains a newline."
+            }
+        }
+
+        if (-not (Test-Path -LiteralPath $statePath)) {
+            $stateValues = [pscustomobject]@{}
+            foreach ($name in $managedEnvNames) {
+                $existingProperty = $envObject.PSObject.Properties[$name]
+                $entry = [pscustomobject]@{
+                    exists = $null -ne $existingProperty
+                    value = if ($null -ne $existingProperty) { [string]$existingProperty.Value } else { $null }
+                }
+                Set-JsonObjectProperty -Object $stateValues -Name $name -Value $entry
+            }
+            $state = [pscustomobject]@{
+                version = 1
+                settingsPath = $fullPath
+                values = $stateValues
+            }
+            Write-ClaudeSettingsJson -Path $statePath -Settings $state
+        }
+
+        Set-JsonObjectProperty -Object $envObject -Name "ANTHROPIC_BASE_URL" -Value $BaseUrl
+        Set-JsonObjectProperty -Object $envObject -Name "ANTHROPIC_AUTH_TOKEN" -Value ([string]$AuthToken)
+        Set-JsonObjectProperty -Object $envObject -Name "ANTHROPIC_MODEL" -Value $Model
+        Remove-JsonObjectProperty -Object $envObject -Name "ANTHROPIC_API_KEY"
+    } elseif ($Mode -eq "default") {
+        if (Test-Path -LiteralPath $statePath) {
+            $state = Read-ClaudeSettingsJson -Path $statePath
+            $stateValuesProperty = $state.PSObject.Properties["values"]
+            if ($null -eq $stateValuesProperty -or $stateValuesProperty.Value -isnot [pscustomobject]) {
+                throw "Could not restore global Claude settings because $statePath is missing a valid values object."
+            }
+
+            foreach ($name in $managedEnvNames) {
+                $entryProperty = $stateValuesProperty.Value.PSObject.Properties[$name]
+                if ($null -eq $entryProperty -or $entryProperty.Value -isnot [pscustomobject]) {
+                    continue
+                }
+
+                $existsProperty = $entryProperty.Value.PSObject.Properties["exists"]
+                $valueProperty = $entryProperty.Value.PSObject.Properties["value"]
+                $previouslyExisted = $false
+                if ($null -ne $existsProperty) {
+                    $previouslyExisted = [bool]$existsProperty.Value
+                }
+
+                if ($previouslyExisted) {
+                    $previousValue = if ($null -ne $valueProperty) { [string]$valueProperty.Value } else { "" }
+                    Set-JsonObjectProperty -Object $envObject -Name $name -Value $previousValue
+                } else {
+                    Remove-JsonObjectProperty -Object $envObject -Name $name
+                }
+            }
+            $removeStateAfterWrite = $true
+        } else {
+            Remove-JsonObjectProperty -Object $envObject -Name "ANTHROPIC_BASE_URL"
+            Remove-JsonObjectProperty -Object $envObject -Name "ANTHROPIC_AUTH_TOKEN"
+            Remove-JsonObjectProperty -Object $envObject -Name "ANTHROPIC_MODEL"
+        }
+        if (@($envObject.PSObject.Properties).Count -eq 0) {
+            Remove-JsonObjectProperty -Object $settings -Name "env"
+        }
+    } else {
+        throw "Unknown global mode: $Mode"
+    }
+
+    Write-ClaudeSettingsJson -Path $fullPath -Settings $settings
+    if ($removeStateAfterWrite -and (Test-Path -LiteralPath $statePath)) {
+        Remove-Item -LiteralPath $statePath -Force
+    }
+    return $fullPath
+}
+
 function Resolve-CodeCommand {
     $pathCommands = @("code", "code-insiders", "codium", "codium-insiders")
     foreach ($name in $pathCommands) {
@@ -485,7 +766,26 @@ if ($UseDefaultClaude -and ($BaseUrlSet -or $AuthTokenSet -or $ModelSet -or (Tes
     Write-Warning "LiteLLM connection options are ignored in --default mode."
 }
 
+if ($UseDefaultClaude -and $SaveConfig) {
+    throw "--save is only for LiteLLM mode. Use default mode only when you want normal Claude settings for this run."
+}
+
+if ($SaveConfig -and ($PrintEnv -or $DryRun -or $Doctor)) {
+    throw "--save cannot be combined with --print-env, --dry-run, or --doctor."
+}
+
+if ($SaveGlobalConfig -and ($PrintEnv -or $DryRun -or $Doctor)) {
+    throw "--global cannot be combined with --print-env, --dry-run, or --doctor."
+}
+
 if ($UseDefaultClaude) {
+    if ($SaveGlobalConfig) {
+        $savedSettingsPath = Save-ClaudeSettingsMode -Mode "default" -Path $SettingsFile
+        Write-Host "Saved global default Claude mode to $savedSettingsPath"
+        Write-Host "Close and reopen Claude Code or VS Code so the change is picked up."
+        exit 0
+    }
+
     if ($PrintEnv) {
         Write-Output "Remove-Item Env:ANTHROPIC_BASE_URL, Env:ANTHROPIC_AUTH_TOKEN, Env:ANTHROPIC_MODEL, Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue"
         Write-Output "$(Format-CommandLine -Arguments $ClaudeArgs.ToArray() -Command $TargetCommand)"
@@ -577,6 +877,35 @@ if ($AuthTokenSet) {
         -Names @("CLAUDE_LITELLM_AUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN", "LITELLM_TEST_KEY", "LITELLM_MASTER_KEY") `
         -EnvFileValues $EnvFileValues `
         -Fallback ""
+}
+
+if ($SaveConfig -or $SaveGlobalConfig) {
+    if ([string]::IsNullOrEmpty($ResolvedAuthToken)) {
+        Write-Warning "Saving an empty token. This only works if the LiteLLM proxy allows unauthenticated requests."
+    }
+
+    if ($SaveConfig) {
+        $savedPath = Save-EnvFileValues -Path $EnvFile -Values @{
+            "CLAUDE_LITELLM_BASE_URL" = $ResolvedBaseUrl
+            "CLAUDE_LITELLM_MODEL" = $ResolvedModel
+            "CLAUDE_LITELLM_AUTH_TOKEN" = $ResolvedAuthToken
+        }
+        Write-Host "Saved LiteLLM settings to $savedPath"
+    }
+
+    if ($SaveGlobalConfig) {
+        $savedSettingsPath = Save-ClaudeSettingsMode `
+            -Mode "litellm" `
+            -Path $SettingsFile `
+            -BaseUrl $ResolvedBaseUrl `
+            -AuthToken $ResolvedAuthToken `
+            -Model $ResolvedModel
+        Write-Host "Saved global LiteLLM mode to $savedSettingsPath"
+        Write-Host "Close and reopen Claude Code or VS Code so the change is picked up."
+    } else {
+        Write-Host "Next time you can run this script without passing --token, --model, or --base-url."
+    }
+    exit 0
 }
 
 if ($PrintEnv) {

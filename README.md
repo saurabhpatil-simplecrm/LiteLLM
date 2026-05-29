@@ -1,72 +1,106 @@
 # Claude LiteLLM Launcher
 
-Use these commands to switch Claude Code between:
+Use this to switch Claude Code between LiteLLM and normal Claude.
 
-- **LiteLLM mode**: Claude talks through the LiteLLM proxy.
-- **Default Claude mode**: Claude uses its normal/original settings.
+## Best Setup
 
-Nothing is permanently changed. The scripts set or clear Claude environment variables only for the app they start.
-
-## Pick One Command
+Download the script once, save your LiteLLM settings once, then use short daily commands.
 
 ### Windows PowerShell
 
-Claude with LiteLLM:
+Download:
 
 ```powershell
-iex "& { $(irm 'https://raw.githubusercontent.com/saurabhpatil-simplecrm/LiteLLM/main/scripts/claude-litellm.ps1') }"
+Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/saurabhpatil-simplecrm/LiteLLM/main/scripts/claude-litellm.ps1' -OutFile "$HOME\claude-litellm.ps1"
+Unblock-File "$HOME\claude-litellm.ps1"
 ```
 
-Claude with default/original settings:
+Save your LiteLLM settings once:
 
 ```powershell
-iex "& { $(irm 'https://raw.githubusercontent.com/saurabhpatil-simplecrm/LiteLLM/main/scripts/claude-litellm.ps1') } default"
+& "$HOME\claude-litellm.ps1" --token 'sk-your-litellm-key' --model 'zai.glm-5' --save
 ```
 
-VS Code with LiteLLM:
+Daily use:
 
 ```powershell
-iex "& { $(irm 'https://raw.githubusercontent.com/saurabhpatil-simplecrm/LiteLLM/main/scripts/claude-litellm.ps1') } --code --args --new-window ."
-```
-
-VS Code with default/original settings:
-
-```powershell
-iex "& { $(irm 'https://raw.githubusercontent.com/saurabhpatil-simplecrm/LiteLLM/main/scripts/claude-litellm.ps1') } default --code --args --new-window ."
+& "$HOME\claude-litellm.ps1"
+& "$HOME\claude-litellm.ps1" default
 ```
 
 ### macOS, Linux, Or Git Bash
 
-Claude with LiteLLM:
+Download:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/saurabhpatil-simplecrm/LiteLLM/main/scripts/claude-litellm.sh | bash
+curl -fsSL 'https://raw.githubusercontent.com/saurabhpatil-simplecrm/LiteLLM/main/scripts/claude-litellm.sh' -o "$HOME/claude-litellm.sh"
+chmod +x "$HOME/claude-litellm.sh"
 ```
 
-Claude with default/original settings:
+Save your LiteLLM settings once:
 
 ```bash
+"$HOME/claude-litellm.sh" --token 'sk-your-litellm-key' --model 'zai.glm-5' --save
+```
+
+Daily use:
+
+```bash
+"$HOME/claude-litellm.sh"
+"$HOME/claude-litellm.sh" default
+```
+
+## VS Code Global Toggle
+
+Use this when the Claude extension in VS Code should keep the same mode after you restart VS Code.
+
+Turn LiteLLM on globally:
+
+```powershell
+& "$HOME\claude-litellm.ps1" --token 'sk-your-litellm-key' --model 'zai.glm-5' --global
+```
+
+```bash
+"$HOME/claude-litellm.sh" --token 'sk-your-litellm-key' --model 'zai.glm-5' --global
+```
+
+Go back to normal Claude globally:
+
+```powershell
+& "$HOME\claude-litellm.ps1" default --global
+```
+
+```bash
+"$HOME/claude-litellm.sh" default --global
+```
+
+After using `--global`, close all Claude Code and VS Code windows, then open them again.
+
+## No Download
+
+PowerShell:
+
+```powershell
+iex "& { $(irm 'https://raw.githubusercontent.com/saurabhpatil-simplecrm/LiteLLM/main/scripts/claude-litellm.ps1') } --token 'sk-your-litellm-key' --model 'zai.glm-5' --save"
+iex "& { $(irm 'https://raw.githubusercontent.com/saurabhpatil-simplecrm/LiteLLM/main/scripts/claude-litellm.ps1') }"
+iex "& { $(irm 'https://raw.githubusercontent.com/saurabhpatil-simplecrm/LiteLLM/main/scripts/claude-litellm.ps1') } default"
+```
+
+Bash:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/saurabhpatil-simplecrm/LiteLLM/main/scripts/claude-litellm.sh | bash -s -- --token 'sk-your-litellm-key' --model 'zai.glm-5' --save
+curl -fsSL https://raw.githubusercontent.com/saurabhpatil-simplecrm/LiteLLM/main/scripts/claude-litellm.sh | bash
 curl -fsSL https://raw.githubusercontent.com/saurabhpatil-simplecrm/LiteLLM/main/scripts/claude-litellm.sh | bash -s -- default
 ```
 
-VS Code with LiteLLM:
+## Notes
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/saurabhpatil-simplecrm/LiteLLM/main/scripts/claude-litellm.sh | bash -s -- --code --args --new-window .
-```
+- Replace `sk-your-litellm-key` with your real LiteLLM key.
+- If your LiteLLM proxy does not need a token, skip `--token`.
+- `--save` writes a local `.env` file for this launcher.
+- `--global` writes Claude Code user settings in `~/.claude/settings.json`, which is the best toggle for VS Code.
+- `default --global` restores the Claude environment values that existed before this launcher turned LiteLLM on globally.
+- Do not commit `.env` if it contains a real token.
 
-VS Code with default/original settings:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/saurabhpatil-simplecrm/LiteLLM/main/scripts/claude-litellm.sh | bash -s -- default --code --args --new-window .
-```
-
-## Important Notes
-
-- On Windows, use the PowerShell commands.
-- Run Bash commands from Bash, Git Bash, macOS Terminal, or Linux Terminal.
-- If VS Code is already open, close it or open a new window from the command above so extensions inherit the selected mode.
-- VS Code Stable, VS Code Insiders, and VSCodium are auto-detected when possible.
-- For a custom VS Code command, add `--code-command <command-or-path>`.
-
-Full details are in [docs/claude-litellm-scripts.md](docs/claude-litellm-scripts.md).
+More details are in [docs/claude-litellm-scripts.md](docs/claude-litellm-scripts.md).

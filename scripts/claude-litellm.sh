@@ -17,6 +17,9 @@ DRY_RUN=0
 DOCTOR=0
 SKIP_HEALTH=0
 PRINT_ENV=0
+SAVE_CONFIG=0
+SAVE_GLOBAL_CONFIG=0
+SETTINGS_FILE=""
 USE_DEFAULT_CLAUDE=0
 RUN_CODE=0
 CODE_COMMAND=""
@@ -57,6 +60,9 @@ Wrapper options:
       --doctor               Check config and target command, then exit
       --skip-health          Skip optional /health check when used with --doctor
       --print-env            Print export commands, then exit
+      --save                 Save LiteLLM URL, model, and token to .env, then exit
+      --global, --user       Save selected mode to ~/.claude/settings.json, then exit
+      --settings-file <path>  Use a custom Claude Code settings.json with --global
       --code, --vscode       Launch VS Code instead of claude with the selected env
       --code-command <cmd>    Use a custom VS Code command or path
       --default, --reset     Clear Anthropic env vars and run normal Claude
@@ -67,6 +73,9 @@ Examples:
   bash scripts/claude-litellm.sh
   bash scripts/claude-litellm.sh litellm
   bash scripts/claude-litellm.sh --token sk-your-key --model zai.glm-5
+  bash scripts/claude-litellm.sh --token sk-your-key --model zai.glm-5 --save
+  bash scripts/claude-litellm.sh --token sk-your-key --model zai.glm-5 --global
+  bash scripts/claude-litellm.sh default --global
   bash scripts/claude-litellm.sh --default
   bash scripts/claude-litellm.sh default
   bash scripts/claude-litellm.sh --dry-run --args --print "hello"
@@ -143,6 +152,9 @@ while [ "$i" -lt "$INPUT_ARG_COUNT" ]; do
     --env-file=*)
       ENV_FILE="${arg#--env-file=}"
       ;;
+    --settings-file=*|--claude-settings=*)
+      SETTINGS_FILE="${arg#*=}"
+      ;;
     --code-command=*|--vscode-command=*)
       CODE_COMMAND="${arg#*=}"
       CODE_COMMAND_SET=1
@@ -171,6 +183,10 @@ while [ "$i" -lt "$INPUT_ARG_COUNT" ]; do
       ENV_FILE="$(read_required_value "$i" "$arg")"
       i=$((i + 1))
       ;;
+    --settings-file|--claude-settings)
+      SETTINGS_FILE="$(read_required_value "$i" "$arg")"
+      i=$((i + 1))
+      ;;
     --code-command|--vscode-command)
       CODE_COMMAND="$(read_required_value "$i" "$arg")"
       if [ -z "$CODE_COMMAND" ] || [[ "$CODE_COMMAND" == --* ]]; then
@@ -194,6 +210,12 @@ while [ "$i" -lt "$INPUT_ARG_COUNT" ]; do
       ;;
     --print-env)
       PRINT_ENV=1
+      ;;
+    --save)
+      SAVE_CONFIG=1
+      ;;
+    --global|--user|--user-env|--vscode-global|--global-vscode)
+      SAVE_GLOBAL_CONFIG=1
       ;;
     --code|--vscode)
       RUN_CODE=1
@@ -402,6 +424,219 @@ clear_anthropic_process_env() {
   unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_MODEL ANTHROPIC_API_KEY
 }
 
+env_assignment() {
+  local key="$1"
+  local value="$2"
+  case "$value" in
+    *$'\n'*|*$'\r'*)
+      die "Cannot save $key because the value contains a newline."
+      ;;
+  esac
+  printf '%s=%s\n' "$key" "$value"
+}
+
+save_litellm_config() {
+  local path="$1"
+  local dir tmp raw key line_written
+  local seen_base=0
+  local seen_model=0
+  local seen_token=0
+
+  dir="$(dirname "$path")"
+  if [ "$dir" != "." ] && [ ! -d "$dir" ]; then
+    mkdir -p "$dir"
+  fi
+
+  tmp="${path}.tmp.$$"
+  : > "$tmp"
+
+  if [ -f "$path" ]; then
+    while IFS= read -r raw || [ -n "$raw" ]; do
+      line_written=0
+      if [[ "$raw" =~ ^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*= ]]; then
+        key="${BASH_REMATCH[2]}"
+        case "$key" in
+          CLAUDE_LITELLM_BASE_URL)
+            env_assignment "$key" "$RESOLVED_BASE_URL" >> "$tmp"
+            seen_base=1
+            line_written=1
+            ;;
+          CLAUDE_LITELLM_MODEL)
+            env_assignment "$key" "$RESOLVED_MODEL" >> "$tmp"
+            seen_model=1
+            line_written=1
+            ;;
+          CLAUDE_LITELLM_AUTH_TOKEN)
+            env_assignment "$key" "$RESOLVED_AUTH_TOKEN" >> "$tmp"
+            seen_token=1
+            line_written=1
+            ;;
+        esac
+      fi
+
+      if [ "$line_written" -eq 0 ]; then
+        printf '%s\n' "$raw" >> "$tmp"
+      fi
+    done < "$path"
+  fi
+
+  [ "$seen_base" -eq 1 ] || env_assignment "CLAUDE_LITELLM_BASE_URL" "$RESOLVED_BASE_URL" >> "$tmp"
+  [ "$seen_model" -eq 1 ] || env_assignment "CLAUDE_LITELLM_MODEL" "$RESOLVED_MODEL" >> "$tmp"
+  [ "$seen_token" -eq 1 ] || env_assignment "CLAUDE_LITELLM_AUTH_TOKEN" "$RESOLVED_AUTH_TOKEN" >> "$tmp"
+
+  mv "$tmp" "$path"
+}
+
+claude_settings_path() {
+  if [ -n "$(trim "$SETTINGS_FILE")" ]; then
+    printf '%s' "$SETTINGS_FILE"
+    return 0
+  fi
+
+  [ -n "${HOME-}" ] || die "Could not find your home folder for Claude Code settings."
+  printf '%s/.claude/settings.json' "$HOME"
+}
+
+save_claude_settings_mode() {
+  local mode="$1"
+  local path
+  path="$(claude_settings_path)"
+
+  command -v node >/dev/null 2>&1 || die "--global needs Node.js to safely update Claude Code settings.json. Node.js is normally installed with Claude Code."
+
+  CLAUDE_LITELLM_SETTINGS_PATH="$path" \
+  CLAUDE_LITELLM_SETTINGS_MODE="$mode" \
+  CLAUDE_LITELLM_SETTINGS_BASE_URL="${RESOLVED_BASE_URL-}" \
+  CLAUDE_LITELLM_SETTINGS_AUTH_TOKEN="${RESOLVED_AUTH_TOKEN-}" \
+  CLAUDE_LITELLM_SETTINGS_MODEL="${RESOLVED_MODEL-}" \
+  node <<'NODE'
+const fs = require('fs');
+const path = require('path');
+
+const settingsPath = process.env.CLAUDE_LITELLM_SETTINGS_PATH;
+const mode = process.env.CLAUDE_LITELLM_SETTINGS_MODE;
+const baseUrl = process.env.CLAUDE_LITELLM_SETTINGS_BASE_URL || '';
+const authToken = process.env.CLAUDE_LITELLM_SETTINGS_AUTH_TOKEN || '';
+const model = process.env.CLAUDE_LITELLM_SETTINGS_MODEL || '';
+const managedKeys = [
+  'ANTHROPIC_BASE_URL',
+  'ANTHROPIC_AUTH_TOKEN',
+  'ANTHROPIC_MODEL',
+  'ANTHROPIC_API_KEY',
+];
+
+function fail(message) {
+  console.error(`ERROR ${message}`);
+  process.exit(1);
+}
+
+function readSettings(filePath) {
+  if (!fs.existsSync(filePath)) {
+    return {};
+  }
+
+  const raw = fs.readFileSync(filePath, 'utf8');
+  if (raw.trim() === '') {
+    return {};
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    fail(`Could not read ${filePath} as JSON. Fix the JSON first, then run this script again. ${error.message}`);
+  }
+
+  if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') {
+    fail(`${filePath} must contain a JSON object.`);
+  }
+
+  return parsed;
+}
+
+if (!settingsPath) {
+  fail('Settings path is empty.');
+}
+
+const statePath = path.join(path.dirname(settingsPath), 'claude-litellm-state.json');
+const settings = readSettings(settingsPath);
+let removeStateAfterWrite = false;
+if (settings.env == null) {
+  settings.env = {};
+} else if (Array.isArray(settings.env) || typeof settings.env !== 'object') {
+  fail(`The env value in ${settingsPath} must be a JSON object. Fix it first so this script does not overwrite unrelated settings.`);
+}
+
+if (mode === 'litellm') {
+  for (const [name, value] of [
+    ['ANTHROPIC_BASE_URL', baseUrl],
+    ['ANTHROPIC_AUTH_TOKEN', authToken],
+    ['ANTHROPIC_MODEL', model],
+  ]) {
+    if (/[\r\n]/.test(value)) {
+      fail(`Cannot save ${name} because the value contains a newline.`);
+    }
+  }
+
+  if (!fs.existsSync(statePath)) {
+    const values = {};
+    for (const key of managedKeys) {
+      values[key] = Object.prototype.hasOwnProperty.call(settings.env, key)
+        ? { exists: true, value: String(settings.env[key]) }
+        : { exists: false, value: null };
+    }
+    fs.mkdirSync(path.dirname(statePath), { recursive: true });
+    fs.writeFileSync(
+      statePath,
+      `${JSON.stringify({ version: 1, settingsPath, values }, null, 2)}\n`,
+      'utf8'
+    );
+  }
+
+  settings.env.ANTHROPIC_BASE_URL = baseUrl;
+  settings.env.ANTHROPIC_AUTH_TOKEN = authToken;
+  settings.env.ANTHROPIC_MODEL = model;
+  delete settings.env.ANTHROPIC_API_KEY;
+} else if (mode === 'default') {
+  if (fs.existsSync(statePath)) {
+    const state = readSettings(statePath);
+    if (!state.values || Array.isArray(state.values) || typeof state.values !== 'object') {
+      fail(`Could not restore global Claude settings because ${statePath} is missing a valid values object.`);
+    }
+
+    for (const key of managedKeys) {
+      const entry = state.values[key];
+      if (!entry || Array.isArray(entry) || typeof entry !== 'object') {
+        continue;
+      }
+      if (entry.exists) {
+        settings.env[key] = String(entry.value || '');
+      } else {
+        delete settings.env[key];
+      }
+    }
+    removeStateAfterWrite = true;
+  } else {
+    delete settings.env.ANTHROPIC_BASE_URL;
+    delete settings.env.ANTHROPIC_AUTH_TOKEN;
+    delete settings.env.ANTHROPIC_MODEL;
+  }
+  if (Object.keys(settings.env).length === 0) {
+    delete settings.env;
+  }
+} else {
+  fail(`Unknown global mode: ${mode}`);
+}
+
+fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+fs.writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 'utf8');
+if (removeStateAfterWrite && fs.existsSync(statePath)) {
+  fs.unlinkSync(statePath);
+}
+console.log(settingsPath);
+NODE
+}
+
 exec_target() {
   local command_name
   command_name="$(target_command)"
@@ -456,7 +691,34 @@ if [ "$USE_DEFAULT_CLAUDE" -eq 1 ] && {
   printf 'WARN LiteLLM connection options are ignored in --default mode.\n' >&2
 fi
 
+if [ "$USE_DEFAULT_CLAUDE" -eq 1 ] && [ "$SAVE_CONFIG" -eq 1 ]; then
+  die "--save is only for LiteLLM mode. Use default mode only when you want normal Claude settings for this run."
+fi
+
+if [ "$SAVE_CONFIG" -eq 1 ] && {
+  [ "$PRINT_ENV" -eq 1 ] ||
+  [ "$DRY_RUN" -eq 1 ] ||
+  [ "$DOCTOR" -eq 1 ]
+}; then
+  die "--save cannot be combined with --print-env, --dry-run, or --doctor."
+fi
+
+if [ "$SAVE_GLOBAL_CONFIG" -eq 1 ] && {
+  [ "$PRINT_ENV" -eq 1 ] ||
+  [ "$DRY_RUN" -eq 1 ] ||
+  [ "$DOCTOR" -eq 1 ]
+}; then
+  die "--global cannot be combined with --print-env, --dry-run, or --doctor."
+fi
+
 if [ "$USE_DEFAULT_CLAUDE" -eq 1 ]; then
+  if [ "$SAVE_GLOBAL_CONFIG" -eq 1 ]; then
+    saved_settings_path="$(save_claude_settings_mode default)"
+    printf 'Saved global default Claude mode to %s\n' "$saved_settings_path"
+    printf 'Close and reopen Claude Code or VS Code so the change is picked up.\n'
+    exit 0
+  fi
+
   if [ "$PRINT_ENV" -eq 1 ]; then
     printf 'unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_MODEL ANTHROPIC_API_KEY\n'
     print_exec_line
@@ -533,6 +795,26 @@ elif value="$(first_nonblank_env CLAUDE_LITELLM_AUTH_TOKEN ANTHROPIC_AUTH_TOKEN 
   RESOLVED_AUTH_TOKEN="$value"
 else
   RESOLVED_AUTH_TOKEN=""
+fi
+
+if [ "$SAVE_CONFIG" -eq 1 ] || [ "$SAVE_GLOBAL_CONFIG" -eq 1 ]; then
+  if [ -z "$RESOLVED_AUTH_TOKEN" ]; then
+    printf 'WARN Saving an empty token. This only works if the LiteLLM proxy allows unauthenticated requests.\n' >&2
+  fi
+
+  if [ "$SAVE_CONFIG" -eq 1 ]; then
+    save_litellm_config "$ENV_FILE"
+    printf 'Saved LiteLLM settings to %s\n' "$ENV_FILE"
+  fi
+
+  if [ "$SAVE_GLOBAL_CONFIG" -eq 1 ]; then
+    saved_settings_path="$(save_claude_settings_mode litellm)"
+    printf 'Saved global LiteLLM mode to %s\n' "$saved_settings_path"
+    printf 'Close and reopen Claude Code or VS Code so the change is picked up.\n'
+  else
+    printf 'Next time you can run this script without passing --token, --model, or --base-url.\n'
+  fi
+  exit 0
 fi
 
 if [ "$PRINT_ENV" -eq 1 ]; then
