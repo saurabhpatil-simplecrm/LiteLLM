@@ -19,7 +19,10 @@ $SkipHealth = $false
 $PrintEnv = $false
 $SaveConfig = $false
 $SaveGlobalConfig = $false
+$SaveVscodeConfig = $false
+$SkipVscodeConfig = $false
 $SettingsFile = $null
+$VscodeSettingsFile = $null
 $UseDefaultClaude = $false
 $RunCode = $false
 $CodeCommand = $null
@@ -58,8 +61,11 @@ Wrapper options:
       --skip-health          Skip /health check when used with --doctor
       --print-env            Print PowerShell env commands, then exit
       --save                 Save LiteLLM URL, model, and token to .env, then exit
-      --global, --user       Save selected mode to ~/.claude/settings.json, then exit
+      --global, --user       Save selected mode to Claude Code and VS Code settings, then exit
       --settings-file <path>  Use a custom Claude Code settings.json with --global
+      --vscode-settings-file <path>
+                             Use a custom VS Code settings.json with --global
+      --no-vscode-settings   Do not update VS Code Claude extension settings
       --code, --vscode       Launch VS Code instead of claude with the selected env
       --code-command <cmd>    Use a custom VS Code command or path
       --default, --reset     Clear Anthropic env vars and run normal Claude
@@ -158,6 +164,10 @@ function Add-RemainingClaudeArgs {
         $SettingsFile = $arg.Substring($arg.IndexOf("=") + 1)
         continue
     }
+    if ($arg.StartsWith("--vscode-settings-file=") -or $arg.StartsWith("--code-settings-file=")) {
+        $VscodeSettingsFile = $arg.Substring($arg.IndexOf("=") + 1)
+        continue
+    }
     if ($arg.StartsWith("--code-command=") -or $arg.StartsWith("--vscode-command=")) {
         $CodeCommand = $arg.Substring($arg.IndexOf("=") + 1)
         $CodeCommandSet = $true
@@ -199,6 +209,11 @@ function Add-RemainingClaudeArgs {
             $i++
             continue
         }
+        { $_ -in @("--vscode-settings-file", "--code-settings-file") } {
+            $VscodeSettingsFile = Read-RequiredValue -Values $InputArgs -Index $i -Flag $arg
+            $i++
+            continue
+        }
         { $_ -in @("--code-command", "--vscode-command") } {
             $CodeCommand = Read-RequiredValue -Values $InputArgs -Index $i -Flag $arg
             if ($CodeCommand -match "^\s*--") {
@@ -235,6 +250,11 @@ function Add-RemainingClaudeArgs {
         }
         { $_ -in @("--global", "--user", "--user-env", "--vscode-global", "--global-vscode") } {
             $SaveGlobalConfig = $true
+            $SaveVscodeConfig = $true
+            continue
+        }
+        "--no-vscode-settings" {
+            $SkipVscodeConfig = $true
             continue
         }
         { $_ -in @("--code", "--vscode") } {
@@ -677,6 +697,412 @@ function Save-ClaudeSettingsMode {
     return $fullPath
 }
 
+function Save-VscodeExtensionSettingsMode {
+    param(
+        [string]$Mode,
+        [AllowNull()][string]$Path,
+        [AllowNull()][string]$BaseUrl,
+        [AllowNull()][string]$AuthToken,
+        [AllowNull()][string]$Model
+    )
+
+    $nodeCommand = Get-Command node -ErrorAction SilentlyContinue
+    if ($null -eq $nodeCommand) {
+        throw "--global needs Node.js to safely update VS Code Claude extension settings."
+    }
+    $nodePath = if (Test-NonBlank $nodeCommand.Source) { $nodeCommand.Source } else { $nodeCommand.Path }
+
+    $envNames = @(
+        "CLAUDE_LITELLM_VSCODE_SETTINGS_FILE",
+        "CLAUDE_LITELLM_VSCODE_MODE",
+        "CLAUDE_LITELLM_VSCODE_BASE_URL",
+        "CLAUDE_LITELLM_VSCODE_AUTH_TOKEN",
+        "CLAUDE_LITELLM_VSCODE_MODEL"
+    )
+    $previousValues = @{}
+    foreach ($name in $envNames) {
+        $previousValues[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
+    }
+
+    try {
+        [Environment]::SetEnvironmentVariable("CLAUDE_LITELLM_VSCODE_SETTINGS_FILE", ([string]$Path), "Process")
+        [Environment]::SetEnvironmentVariable("CLAUDE_LITELLM_VSCODE_MODE", $Mode, "Process")
+        [Environment]::SetEnvironmentVariable("CLAUDE_LITELLM_VSCODE_BASE_URL", ([string]$BaseUrl), "Process")
+        [Environment]::SetEnvironmentVariable("CLAUDE_LITELLM_VSCODE_AUTH_TOKEN", ([string]$AuthToken), "Process")
+        [Environment]::SetEnvironmentVariable("CLAUDE_LITELLM_VSCODE_MODEL", ([string]$Model), "Process")
+
+        $script = @'
+const fs = require('fs');
+const path = require('path');
+
+const explicitSettingsFile = process.env.CLAUDE_LITELLM_VSCODE_SETTINGS_FILE || '';
+const mode = process.env.CLAUDE_LITELLM_VSCODE_MODE || '';
+const baseUrl = process.env.CLAUDE_LITELLM_VSCODE_BASE_URL || '';
+const authToken = process.env.CLAUDE_LITELLM_VSCODE_AUTH_TOKEN || '';
+const model = process.env.CLAUDE_LITELLM_VSCODE_MODEL || '';
+const keyName = 'claudeCode.environmentVariables';
+const stateFileName = 'claude-litellm-vscode-state.json';
+const managedNames = new Set([
+  'ANTHROPIC_BASE_URL',
+  'ANTHROPIC_AUTH_TOKEN',
+  'ANTHROPIC_MODEL',
+  'ANTHROPIC_API_KEY',
+]);
+
+function fail(message) {
+  console.error(`ERROR ${message}`);
+  process.exit(1);
+}
+
+function fileExists(filePath) {
+  try {
+    return fs.statSync(filePath).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function dirExists(dirPath) {
+  try {
+    return fs.statSync(dirPath).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function hasClaudeExtension(dirPath) {
+  if (!dirExists(dirPath)) return false;
+  return fs.readdirSync(dirPath).some((name) => /^anthropic\.claude-code-/i.test(name));
+}
+
+function hasSetting(filePath) {
+  return fileExists(filePath) && fs.readFileSync(filePath, 'utf8').includes(`"${keyName}"`);
+}
+
+function pushTarget(targets, settingsPath, extensionDir) {
+  if (!settingsPath) return;
+  if (explicitSettingsFile) {
+    targets.push(settingsPath);
+    return;
+  }
+  if (hasSetting(settingsPath) || hasClaudeExtension(extensionDir)) {
+    targets.push(settingsPath);
+  }
+}
+
+function discoverTargets() {
+  if (explicitSettingsFile) {
+    return [path.resolve(explicitSettingsFile)];
+  }
+
+  const targets = [];
+  const home = process.env.USERPROFILE || process.env.HOME || '';
+  const appdata = process.env.APPDATA || '';
+  const xdgConfig = process.env.XDG_CONFIG_HOME || (home ? path.join(home, '.config') : '');
+
+  if (appdata) {
+    pushTarget(targets, path.join(appdata, 'Code', 'User', 'settings.json'), home ? path.join(home, '.vscode', 'extensions') : '');
+    pushTarget(targets, path.join(appdata, 'Code - Insiders', 'User', 'settings.json'), home ? path.join(home, '.vscode-insiders', 'extensions') : '');
+    pushTarget(targets, path.join(appdata, 'VSCodium', 'User', 'settings.json'), home ? path.join(home, '.vscodium', 'extensions') : '');
+    pushTarget(targets, path.join(appdata, 'Cursor', 'User', 'settings.json'), home ? path.join(home, '.cursor', 'extensions') : '');
+  }
+
+  if (home && process.platform === 'darwin') {
+    pushTarget(targets, path.join(home, 'Library', 'Application Support', 'Code', 'User', 'settings.json'), path.join(home, '.vscode', 'extensions'));
+    pushTarget(targets, path.join(home, 'Library', 'Application Support', 'Code - Insiders', 'User', 'settings.json'), path.join(home, '.vscode-insiders', 'extensions'));
+    pushTarget(targets, path.join(home, 'Library', 'Application Support', 'VSCodium', 'User', 'settings.json'), path.join(home, '.vscodium', 'extensions'));
+    pushTarget(targets, path.join(home, 'Library', 'Application Support', 'Cursor', 'User', 'settings.json'), path.join(home, '.cursor', 'extensions'));
+  }
+
+  if (xdgConfig) {
+    pushTarget(targets, path.join(xdgConfig, 'Code', 'User', 'settings.json'), home ? path.join(home, '.vscode', 'extensions') : '');
+    pushTarget(targets, path.join(xdgConfig, 'Code - Insiders', 'User', 'settings.json'), home ? path.join(home, '.vscode-insiders', 'extensions') : '');
+    pushTarget(targets, path.join(xdgConfig, 'VSCodium', 'User', 'settings.json'), home ? path.join(home, '.vscodium', 'extensions') : '');
+    pushTarget(targets, path.join(xdgConfig, 'Cursor', 'User', 'settings.json'), home ? path.join(home, '.cursor', 'extensions') : '');
+  }
+
+  return Array.from(new Set(targets.map((item) => path.resolve(item))));
+}
+
+function readString(source, start) {
+  let i = start + 1;
+  let value = '';
+  while (i < source.length) {
+    const ch = source[i];
+    if (ch === '\\') {
+      value += ch + (source[i + 1] || '');
+      i += 2;
+      continue;
+    }
+    if (ch === '"') {
+      return { value: JSON.parse(source.slice(start, i + 1)), end: i + 1 };
+    }
+    value += ch;
+    i += 1;
+  }
+  fail('Unterminated string in VS Code settings.json.');
+}
+
+function skipTrivia(source, index) {
+  let i = index;
+  while (i < source.length) {
+    if (/\s/.test(source[i])) {
+      i += 1;
+      continue;
+    }
+    if (source[i] === '/' && source[i + 1] === '/') {
+      i += 2;
+      while (i < source.length && source[i] !== '\n') i += 1;
+      continue;
+    }
+    if (source[i] === '/' && source[i + 1] === '*') {
+      i += 2;
+      while (i < source.length && !(source[i] === '*' && source[i + 1] === '/')) i += 1;
+      i += 2;
+      continue;
+    }
+    break;
+  }
+  return i;
+}
+
+function scanValue(source, start) {
+  let i = skipTrivia(source, start);
+  const opener = source[i];
+  if (opener === '"' ) return readString(source, i).end;
+  if (opener === '{' || opener === '[') {
+    const stack = [opener === '{' ? '}' : ']'];
+    i += 1;
+    while (i < source.length && stack.length) {
+      if (source[i] === '"') {
+        i = readString(source, i).end;
+        continue;
+      }
+      if (source[i] === '/' && source[i + 1] === '/') {
+        i = skipTrivia(source, i);
+        continue;
+      }
+      if (source[i] === '/' && source[i + 1] === '*') {
+        i = skipTrivia(source, i);
+        continue;
+      }
+      if (source[i] === '{' || source[i] === '[') stack.push(source[i] === '{' ? '}' : ']');
+      else if (source[i] === stack[stack.length - 1]) stack.pop();
+      i += 1;
+    }
+    if (stack.length) fail('Unterminated value in VS Code settings.json.');
+    return i;
+  }
+  while (i < source.length && source[i] !== ',' && source[i] !== '}') i += 1;
+  return i;
+}
+
+function findRootClose(source) {
+  const rootStart = source.indexOf('{');
+  if (rootStart < 0) return -1;
+  let i = rootStart + 1;
+  let depth = 1;
+  while (i < source.length) {
+    if (source[i] === '"') {
+      i = readString(source, i).end;
+      continue;
+    }
+    if (source[i] === '/' && (source[i + 1] === '/' || source[i + 1] === '*')) {
+      i = skipTrivia(source, i);
+      continue;
+    }
+    if (source[i] === '{') depth += 1;
+    else if (source[i] === '}') {
+      depth -= 1;
+      if (depth === 0) return i;
+    }
+    i += 1;
+  }
+  return -1;
+}
+
+function findTopLevelProperty(source, key) {
+  const rootStart = source.indexOf('{');
+  if (rootStart < 0) return null;
+  let i = rootStart + 1;
+  let depth = 1;
+  while (i < source.length) {
+    i = skipTrivia(source, i);
+    if (i >= source.length) return null;
+    if (source[i] === '"') {
+      const token = readString(source, i);
+      const colon = skipTrivia(source, token.end);
+      if (depth === 1 && source[colon] === ':' && token.value === key) {
+        const valueStart = skipTrivia(source, colon + 1);
+        const valueEnd = scanValue(source, valueStart);
+        return { propertyStart: i, valueStart, valueEnd };
+      }
+      i = token.end;
+      continue;
+    }
+    if (source[i] === '{') depth += 1;
+    else if (source[i] === '}') {
+      depth -= 1;
+      if (depth === 0) return null;
+    }
+    i += 1;
+  }
+  return null;
+}
+
+function removeTopLevelProperty(source, key) {
+  const found = findTopLevelProperty(source, key);
+  if (!found) return source;
+
+  let end = skipTrivia(source, found.valueEnd);
+  if (source[end] === ',') {
+    return source.slice(0, found.propertyStart) + source.slice(end + 1);
+  }
+
+  let start = found.propertyStart;
+  let cursor = start - 1;
+  while (cursor >= 0 && /\s/.test(source[cursor])) cursor -= 1;
+  if (source[cursor] === ',') start = cursor;
+  return source.slice(0, start) + source.slice(found.valueEnd);
+}
+
+function stripJsonc(source) {
+  let result = '';
+  let i = 0;
+  while (i < source.length) {
+    if (source[i] === '"') {
+      const token = readString(source, i);
+      result += source.slice(i, token.end);
+      i = token.end;
+      continue;
+    }
+    if (source[i] === '/' && source[i + 1] === '/') {
+      i += 2;
+      while (i < source.length && source[i] !== '\n') i += 1;
+      continue;
+    }
+    if (source[i] === '/' && source[i + 1] === '*') {
+      i += 2;
+      while (i < source.length && !(source[i] === '*' && source[i + 1] === '/')) i += 1;
+      i += 2;
+      continue;
+    }
+    result += source[i];
+    i += 1;
+  }
+  return result.replace(/,\s*([}\]])/g, '$1');
+}
+
+function readEnvArray(source, filePath) {
+  const found = findTopLevelProperty(source, keyName);
+  if (!found) return { existed: false, value: [] };
+  const rawValue = source.slice(found.valueStart, found.valueEnd);
+  let parsed;
+  try {
+    parsed = JSON.parse(stripJsonc(rawValue));
+  } catch (error) {
+    fail(`Could not read ${keyName} in ${filePath}. Fix that JSON value first. ${error.message}`);
+  }
+  if (!Array.isArray(parsed)) {
+    fail(`${keyName} in ${filePath} must be an array.`);
+  }
+  return { existed: true, value: parsed };
+}
+
+function hasObjectContent(source, rootStart, rootClose) {
+  return stripJsonc(source.slice(rootStart + 1, rootClose)).trim().length > 0;
+}
+
+function setTopLevelProperty(source, key, value) {
+  let text = source.trim().length ? source : '{\n}\n';
+  if (!text.includes('{')) text = '{\n}\n';
+  text = removeTopLevelProperty(text, key);
+  if (value === null) return text;
+
+  const rootStart = text.indexOf('{');
+  const rootClose = findRootClose(text);
+  if (rootStart < 0 || rootClose < 0) {
+    fail('VS Code settings.json must contain a JSON object.');
+  }
+
+  const valueJson = JSON.stringify(value, null, 2).replace(/\n/g, '\n  ');
+  const prefix = hasObjectContent(text, rootStart, rootClose) ? ',\n  ' : '\n  ';
+  const propertyText = `${prefix}${JSON.stringify(key)}: ${valueJson}\n`;
+  let insertAt = rootClose;
+  while (insertAt > rootStart + 1 && /\s/.test(text[insertAt - 1])) insertAt -= 1;
+  return text.slice(0, insertAt) + propertyText + text.slice(rootClose);
+}
+
+function statePathFor(settingsPath) {
+  return path.join(path.dirname(settingsPath), stateFileName);
+}
+
+function updateSettingsFile(settingsPath) {
+  let source = fileExists(settingsPath) ? fs.readFileSync(settingsPath, 'utf8') : '{\n}\n';
+  const statePath = statePathFor(settingsPath);
+  const current = readEnvArray(source, settingsPath);
+  let nextValue = null;
+  let removeState = false;
+
+  if (mode === 'litellm') {
+    for (const [name, value] of [
+      ['ANTHROPIC_BASE_URL', baseUrl],
+      ['ANTHROPIC_AUTH_TOKEN', authToken],
+      ['ANTHROPIC_MODEL', model],
+    ]) {
+      if (/[\r\n]/.test(value)) fail(`Cannot save ${name} because the value contains a newline.`);
+    }
+
+    if (!fileExists(statePath)) {
+      fs.mkdirSync(path.dirname(statePath), { recursive: true });
+      fs.writeFileSync(statePath, `${JSON.stringify({
+        version: 1,
+        settingsPath,
+        existed: current.existed,
+        value: current.existed ? current.value : null,
+      }, null, 2)}\n`, 'utf8');
+    }
+
+    nextValue = current.value.filter((item) => !item || !managedNames.has(String(item.name || '')));
+    nextValue.push({ name: 'ANTHROPIC_BASE_URL', value: baseUrl });
+    nextValue.push({ name: 'ANTHROPIC_AUTH_TOKEN', value: authToken });
+    nextValue.push({ name: 'ANTHROPIC_MODEL', value: model });
+  } else if (mode === 'default') {
+    if (fileExists(statePath)) {
+      const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+      nextValue = state.existed ? state.value : null;
+      removeState = true;
+    } else {
+      nextValue = current.value.filter((item) => !item || !managedNames.has(String(item.name || '')));
+      if (nextValue.length === 0) nextValue = null;
+    }
+  } else {
+    fail(`Unknown VS Code mode: ${mode}`);
+  }
+
+  source = setTopLevelProperty(source, keyName, nextValue);
+  fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+  fs.writeFileSync(settingsPath, source.endsWith('\n') ? source : `${source}\n`, 'utf8');
+  if (removeState && fileExists(statePath)) fs.unlinkSync(statePath);
+  console.log(settingsPath);
+}
+
+const targets = discoverTargets();
+for (const target of targets) updateSettingsFile(target);
+'@
+
+        $output = $script | & $nodePath 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            throw (($output | Out-String).Trim())
+        }
+        return @($output | Where-Object { Test-NonBlank ([string]$_) } | ForEach-Object { [string]$_ })
+    } finally {
+        foreach ($name in $envNames) {
+            [Environment]::SetEnvironmentVariable($name, $previousValues[$name], "Process")
+        }
+    }
+}
+
 function Resolve-CodeCommand {
     $pathCommands = @("code", "code-insiders", "codium", "codium-insiders")
     foreach ($name in $pathCommands) {
@@ -778,10 +1204,28 @@ if ($SaveGlobalConfig -and ($PrintEnv -or $DryRun -or $Doctor)) {
     throw "--global cannot be combined with --print-env, --dry-run, or --doctor."
 }
 
+if ($SkipVscodeConfig) {
+    $SaveVscodeConfig = $false
+}
+
 if ($UseDefaultClaude) {
     if ($SaveGlobalConfig) {
         $savedSettingsPath = Save-ClaudeSettingsMode -Mode "default" -Path $SettingsFile
         Write-Host "Saved global default Claude mode to $savedSettingsPath"
+        if ($SaveVscodeConfig) {
+            $updatedVscodeSettings = Save-VscodeExtensionSettingsMode `
+                -Mode "default" `
+                -Path $VscodeSettingsFile `
+                -BaseUrl $null `
+                -AuthToken $null `
+                -Model $null
+            foreach ($settingsPath in $updatedVscodeSettings) {
+                Write-Host "Saved VS Code Claude extension default mode to $settingsPath"
+            }
+            if (@($updatedVscodeSettings).Count -eq 0) {
+                Write-Host "No VS Code Claude extension settings found to update."
+            }
+        }
         Write-Host "Close and reopen Claude Code or VS Code so the change is picked up."
         exit 0
     }
@@ -901,6 +1345,20 @@ if ($SaveConfig -or $SaveGlobalConfig) {
             -AuthToken $ResolvedAuthToken `
             -Model $ResolvedModel
         Write-Host "Saved global LiteLLM mode to $savedSettingsPath"
+        if ($SaveVscodeConfig) {
+            $updatedVscodeSettings = Save-VscodeExtensionSettingsMode `
+                -Mode "litellm" `
+                -Path $VscodeSettingsFile `
+                -BaseUrl $ResolvedBaseUrl `
+                -AuthToken $ResolvedAuthToken `
+                -Model $ResolvedModel
+            foreach ($settingsPath in $updatedVscodeSettings) {
+                Write-Host "Saved VS Code Claude extension LiteLLM mode to $settingsPath"
+            }
+            if (@($updatedVscodeSettings).Count -eq 0) {
+                Write-Host "No VS Code Claude extension settings found to update."
+            }
+        }
         Write-Host "Close and reopen Claude Code or VS Code so the change is picked up."
     } else {
         Write-Host "Next time you can run this script without passing --token, --model, or --base-url."

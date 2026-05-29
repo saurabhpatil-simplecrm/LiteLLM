@@ -54,6 +54,8 @@ Daily use:
 
 Use this when the Claude extension in VS Code should keep the same mode after you restart VS Code.
 
+This updates both Claude Code user settings and the Claude Code VS Code extension setting when the extension is installed.
+
 Turn LiteLLM on globally:
 
 ```powershell
@@ -99,8 +101,9 @@ curl -fsSL https://raw.githubusercontent.com/saurabhpatil-simplecrm/LiteLLM/main
 - Replace `sk-your-litellm-key` with your real LiteLLM key.
 - If your LiteLLM proxy does not need a token, skip `--token`.
 - `--save` writes a local `.env` file for this launcher.
-- `--global` writes Claude Code user settings in `~/.claude/settings.json`, which is the best toggle for VS Code.
-- `default --global` restores the Claude environment values that existed before this launcher turned LiteLLM on globally.
+- `--global` writes Claude Code user settings in `~/.claude/settings.json`.
+- `--global` also updates VS Code's `claudeCode.environmentVariables` when the Claude Code extension is installed.
+- `default --global` restores the Claude and VS Code environment values that existed before this launcher turned LiteLLM on globally.
 - Do not commit `.env` if it contains a real token.
 
 More details are in [docs/claude-litellm-scripts.md](docs/claude-litellm-scripts.md).

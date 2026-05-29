@@ -83,6 +83,8 @@ Use normal Claude:
 
 Use this when the Claude extension in VS Code should remember the mode after VS Code restarts.
 
+This updates Claude Code user settings and, when installed, the Claude Code VS Code extension setting named `claudeCode.environmentVariables`.
+
 PowerShell, turn LiteLLM on globally:
 
 ```powershell
@@ -113,6 +115,7 @@ What `--global` changes:
 
 ```text
 ~/.claude/settings.json
+VS Code User/settings.json
 ```
 
 It adds these Claude Code user settings:
@@ -129,7 +132,13 @@ It adds these Claude Code user settings:
 
 Claude Code user settings apply to all projects. They are also the right place for a VS Code extension that starts Claude Code.
 
-When LiteLLM is turned on globally, the launcher also saves the previous values for these Claude environment settings in `~/.claude/claude-litellm-state.json`. When you run `default --global`, it restores those previous values and removes that backup file.
+When LiteLLM is turned on globally, the launcher also saves the previous values for these Claude environment settings in restore files beside each settings file. When you run `default --global`, it restores those previous values and removes the restore files.
+
+For VS Code, the restore file is:
+
+```text
+claude-litellm-vscode-state.json
+```
 
 ## No Download Commands
 
@@ -271,7 +280,7 @@ If you used `--global`, restart Claude Code or VS Code.
 
 Close all VS Code windows, then open VS Code again.
 
-If that still does not work, use:
+If that still does not work, an old VS Code extension setting may be overriding Claude settings. Use:
 
 ```powershell
 & "$HOME\claude-litellm.ps1" default --global
@@ -282,6 +291,8 @@ If that still does not work, use:
 "$HOME/claude-litellm.sh" default --global
 "$HOME/claude-litellm.sh" --token 'sk-your-litellm-key' --model 'zai.glm-5' --global
 ```
+
+The setting to check manually is `claudeCode.environmentVariables` in VS Code User Settings JSON.
 
 ### `ANTHROPIC_AUTH_TOKEN is empty`
 
